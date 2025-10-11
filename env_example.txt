@@ -1,0 +1,19 @@
+# Reddit API 配置 (OAuth2)
+REDDIT_CLIENT_ID=your_reddit_client_id
+REDDIT_CLIENT_SECRET=your_reddit_client_secret
+REDDIT_USER_AGENT=RedInsight Bot 1.0
+REDDIT_REDIRECT_URI=http://localhost:8080
+# 注意：用户名和密码认证已被弃用，现在使用OAuth2认证
+
+# 大模型API配置
+OPENAI_API_KEY=your_openai_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+DEEPSEEK_API_KEY=your_deepseek_api_key
+
+# 数据库配置
+DATABASE_URL=sqlite:///redinsight.db
+
+# 分析配置
+ANALYSIS_MODEL=gpt-3.5-turbo
+LOG_LEVEL=INFO
+

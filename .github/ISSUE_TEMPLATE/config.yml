@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 社区支持
+    url: https://github.com/chaos-of-dawn/RedInsight/discussions
+    about: 请在这里提问和讨论，获取社区支持
+  - name: 文档
+    url: https://github.com/chaos-of-dawn/RedInsight#readme
+    about: 查看项目文档和使用说明

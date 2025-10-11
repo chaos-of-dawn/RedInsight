@@ -1,0 +1,589 @@
+"""
+大模型分析模块 - 接入OpenAI和Anthropic API进行数据分析
+"""
+import openai
+import anthropic
+import logging
+from typing import List, Dict, Any, Optional
+import json
+import time
+import requests
+from config import Config
+
+class LLMAnalyzer:
+    """大模型分析器"""
+    
+    def __init__(self, api_keys: dict = None):
+        """初始化大模型客户端"""
+        self.logger = logging.getLogger(__name__)
+        
+        # 使用传入的API密钥或默认配置
+        openai_key = (api_keys.get('openai_api_key') if api_keys else None) or Config.OPENAI_API_KEY
+        anthropic_key = (api_keys.get('anthropic_api_key') if api_keys else None) or Config.ANTHROPIC_API_KEY
+        deepseek_key = (api_keys.get('deepseek_api_key') if api_keys else None) or Config.DEEPSEEK_API_KEY
+        
+        # 初始化OpenAI客户端
+        if openai_key:
+            openai.api_key = openai_key
+            self.openai_client = openai.OpenAI(api_key=openai_key)
+        else:
+            self.openai_client = None
+            
+        # 初始化Anthropic客户端
+        if anthropic_key:
+            self.anthropic_client = anthropic.Anthropic(api_key=anthropic_key)
+        else:
+            self.anthropic_client = None
+        
+        # DeepSeek API配置
+        self.deepseek_api_key = deepseek_key
+        self.deepseek_base_url = "https://api.deepseek.com/v1"
+        
+        # 调试信息
+        self.logger.info(f"LLMAnalyzer初始化完成:")
+        self.logger.info(f"  OpenAI客户端: {'已配置' if self.openai_client else '未配置'}")
+        self.logger.info(f"  Anthropic客户端: {'已配置' if self.anthropic_client else '未配置'}")
+        self.logger.info(f"  DeepSeek API密钥: {'已配置' if self.deepseek_api_key else '未配置'}")
+    
+    def analyze_sentiment(self, text: str, provider: str = "openai", custom_prompt: str = None) -> Dict[str, Any]:
+        """
+        分析文本情感
+        
+        Args:
+            text: 要分析的文本
+            provider: API提供商 ("openai" 或 "anthropic")
+            custom_prompt: 自定义提示词模板
+            
+        Returns:
+            情感分析结果
+        """
+        if custom_prompt:
+            prompt = custom_prompt.format(text=text)
+        else:
+            prompt = f"""
+            请分析以下文本的情感倾向，并给出详细的分析结果：
+            
+            文本内容：{text}
+            
+            请按以下格式返回JSON结果：
+            {{
+                "sentiment": "positive/negative/neutral",
+                "confidence": 0.0-1.0,
+                "emotions": ["emotion1", "emotion2"],
+                "summary": "简要总结",
+                "key_phrases": ["phrase1", "phrase2"]
+            }}
+            """
+        
+        return self._call_llm(prompt, provider, "sentiment_analysis")
+    
+    def analyze_topic(self, text: str, provider: str = "openai", custom_prompt: str = None) -> Dict[str, Any]:
+        """
+        分析文本主题
+        
+        Args:
+            text: 要分析的文本
+            provider: API提供商
+            custom_prompt: 自定义提示词模板
+            
+        Returns:
+            主题分析结果
+        """
+        if custom_prompt:
+            prompt = custom_prompt.format(text=text)
+        else:
+            prompt = f"""
+            请分析以下文本的主要主题和关键词：
+            
+            文本内容：{text}
+            
+            请按以下格式返回JSON结果：
+            {{
+                "main_topics": ["topic1", "topic2"],
+                "keywords": ["keyword1", "keyword2"],
+                "category": "技术/生活/娱乐/其他",
+                "summary": "主题总结",
+                "relevance_score": 0.0-1.0
+            }}
+            """
+        
+        return self._call_llm(prompt, provider, "topic_analysis")
+    
+    def analyze_quality(self, text: str, provider: str = "openai", custom_prompt: str = None) -> Dict[str, Any]:
+        """
+        分析文本质量
+        
+        Args:
+            text: 要分析的文本
+            provider: API提供商
+            custom_prompt: 自定义提示词模板
+            
+        Returns:
+            质量分析结果
+        """
+        if custom_prompt:
+            prompt = custom_prompt.format(text=text)
+        else:
+            prompt = f"""
+            请评估以下文本的质量，包括内容的深度、逻辑性和价值：
+            
+            文本内容：{text}
+            
+            请按以下格式返回JSON结果：
+            {{
+                "quality_score": 0.0-1.0,
+                "depth": "浅层/中等/深层",
+                "logic_quality": "好/一般/差",
+                "value": "高/中/低",
+                "suggestions": ["建议1", "建议2"],
+                "summary": "质量评估总结"
+            }}
+            """
+        
+        return self._call_llm(prompt, provider, "quality_analysis")
+    
+    def generate_summary(self, posts: List[Dict], provider: str = "openai") -> Dict[str, Any]:
+        """
+        生成多个帖子的汇总分析
+        
+        Args:
+            posts: 帖子列表
+            provider: API提供商
+            
+        Returns:
+            汇总分析结果
+        """
+        posts_text = ""
+        for i, post in enumerate(posts[:10], 1):  # 限制前10个帖子
+            posts_text += f"帖子{i}：{post.get('title', '')}\n内容：{post.get('selftext', '')}\n\n"
+        
+        prompt = f"""
+        请分析以下Reddit帖子，生成一个综合性的汇总报告：
+        
+        {posts_text}
+        
+        请按以下格式返回JSON结果：
+        {{
+            "overall_trends": ["趋势1", "趋势2"],
+            "common_themes": ["主题1", "主题2"],
+            "sentiment_overview": "整体情感倾向",
+            "key_insights": ["洞察1", "洞察2"],
+            "recommendations": ["建议1", "建议2"],
+            "summary": "综合总结"
+        }}
+        """
+        
+        return self._call_llm(prompt, provider, "summary_analysis")
+    
+    def analyze_community_engagement(self, posts: List[Dict], comments: List[Dict], 
+                                   provider: str = "openai") -> Dict[str, Any]:
+        """
+        分析社区参与度
+        
+        Args:
+            posts: 帖子列表
+            comments: 评论列表
+            provider: API提供商
+            
+        Returns:
+            社区参与度分析结果
+        """
+        engagement_data = {
+            "total_posts": len(posts),
+            "total_comments": len(comments),
+            "avg_score": sum(p.get('score', 0) for p in posts) / len(posts) if posts else 0,
+            "avg_comments": sum(p.get('num_comments', 0) for p in posts) / len(posts) if posts else 0
+        }
+        
+        prompt = f"""
+        基于以下社区数据，分析用户参与度和互动模式：
+        
+        数据统计：
+        - 帖子总数：{engagement_data['total_posts']}
+        - 评论总数：{engagement_data['total_comments']}
+        - 平均得分：{engagement_data['avg_score']:.2f}
+        - 平均评论数：{engagement_data['avg_comments']:.2f}
+        
+        请按以下格式返回JSON结果：
+        {{
+            "engagement_level": "高/中/低",
+            "interaction_patterns": ["模式1", "模式2"],
+            "community_health": "健康/一般/需要关注",
+            "growth_indicators": ["指标1", "指标2"],
+            "recommendations": ["建议1", "建议2"],
+            "summary": "参与度分析总结"
+        }}
+        """
+        
+        return self._call_llm(prompt, provider, "engagement_analysis")
+    
+    def analyze_posts_batch(self, posts_data: List[Dict], analysis_type: str, provider: str = "openai") -> Dict[str, Any]:
+        """
+        批量分析多个帖子
+        
+        Args:
+            posts_data: 帖子数据列表
+            analysis_type: 分析类型 ("sentiment", "topic", "quality")
+            provider: API提供商
+            
+        Returns:
+            批量分析结果
+        """
+        if not posts_data:
+            return {"error": "没有提供帖子数据"}
+        
+        # 构建批量分析的提示词
+        posts_text = ""
+        for i, post in enumerate(posts_data, 1):
+            posts_text += f"帖子{i}:\n"
+            posts_text += f"标题: {post.get('title', '')}\n"
+            posts_text += f"内容: {post.get('content', '')}\n"
+            posts_text += f"作者: {post.get('author', '')}\n"
+            posts_text += f"子版块: {post.get('subreddit', '')}\n"
+            posts_text += f"分数: {post.get('score', 0)}\n"
+            posts_text += f"时间: {post.get('created_time', '')}\n\n"
+        
+        if analysis_type == "sentiment":
+            prompt = f"""
+            请对以下多个Reddit帖子进行批量情感分析：
+            
+            {posts_text}
+            
+            请按以下格式返回JSON结果：
+            {{
+                "batch_analysis": {{
+                    "overall_sentiment": "positive/negative/neutral",
+                    "sentiment_distribution": {{
+                        "positive": 0,
+                        "negative": 0,
+                        "neutral": 0
+                    }},
+                    "average_confidence": 0.0,
+                    "common_emotions": ["emotion1", "emotion2"],
+                    "summary": "批量情感分析总结"
+                }},
+                "individual_results": [
+                    {{
+                        "post_id": "帖子ID",
+                        "sentiment": "positive/negative/neutral",
+                        "confidence": 0.0,
+                        "key_emotions": ["emotion1", "emotion2"]
+                    }}
+                ]
+            }}
+            """
+        elif analysis_type == "topic":
+            prompt = f"""
+            请对以下多个Reddit帖子进行批量主题分析：
+            
+            {posts_text}
+            
+            请按以下格式返回JSON结果：
+            {{
+                "batch_analysis": {{
+                    "main_topics": ["topic1", "topic2", "topic3"],
+                    "topic_frequency": {{
+                        "topic1": 0,
+                        "topic2": 0
+                    }},
+                    "common_keywords": ["keyword1", "keyword2"],
+                    "category_distribution": {{
+                        "技术": 0,
+                        "生活": 0,
+                        "娱乐": 0
+                    }},
+                    "summary": "批量主题分析总结"
+                }},
+                "individual_results": [
+                    {{
+                        "post_id": "帖子ID",
+                        "main_topics": ["topic1", "topic2"],
+                        "keywords": ["keyword1", "keyword2"],
+                        "category": "技术/生活/娱乐/其他"
+                    }}
+                ]
+            }}
+            """
+        elif analysis_type == "quality":
+            prompt = f"""
+            请对以下多个Reddit帖子进行批量质量评估：
+            
+            {posts_text}
+            
+            请按以下格式返回JSON结果：
+            {{
+                "batch_analysis": {{
+                    "average_quality_score": 0.0,
+                    "quality_distribution": {{
+                        "high": 0,
+                        "medium": 0,
+                        "low": 0
+                    }},
+                    "common_issues": ["issue1", "issue2"],
+                    "improvement_suggestions": ["suggestion1", "suggestion2"],
+                    "summary": "批量质量评估总结"
+                }},
+                "individual_results": [
+                    {{
+                        "post_id": "帖子ID",
+                        "quality_score": 0.0,
+                        "depth": "浅层/中等/深层",
+                        "logic_quality": "好/一般/差",
+                        "value": "高/中/低"
+                    }}
+                ]
+            }}
+            """
+        else:
+            return {"error": f"不支持的分析类型: {analysis_type}"}
+        
+        return self._call_llm(prompt, provider, f"batch_{analysis_type}_analysis")
+    
+    def analyze_comprehensive(self, text: str, provider: str = "openai", custom_prompt: str = None) -> Dict[str, Any]:
+        """
+        综合分析文本（包含主题、情感、洞察和结构化分析）
+        
+        Args:
+            text: 要分析的文本
+            provider: API提供商
+            custom_prompt: 自定义综合提示词模板
+            
+        Returns:
+            综合分析结果
+        """
+        if custom_prompt:
+            prompt = custom_prompt.format(text=text)
+        else:
+            prompt = f"""
+            你是一位专业的社交媒体数据分析师。你的任务是深度分析Reddit社区中关于指定主题的讨论。
+
+            请根据下面提供的原始Reddit帖子和评论数据，完成以下四个部分的结构化分析和总结。
+
+            ---
+            ### 原始数据：{text}
+            ---
+
+            ### **任务一：情感与立场分析 (Sentiment & Stance)**
+
+            1. **整体情绪：** 总结这段数据流中用户讨论的整体情绪倾向（例如：70% 积极，20% 负面，10% 中立）。
+            2. **核心情感识别：** 识别讨论中最突出的三种情感（例如：沮丧、希望、感激、焦虑）。
+            3. **争议点（如果存在）：** 如果用户在讨论某个特定方法或产品时存在显著争议，请明确指出该争议的核心焦点。
+
+            ### **任务二：主题与痛点提取 (Topic & Pain Points)**
+
+            1. **主要讨论主题：** 将这段数据内容归纳为 2 到 3 个最集中的讨论主题或焦点。
+            2. **提取核心痛点：** 总结用户遇到的最常见、最迫切的问题或挑战（即用户主要在抱怨什么或寻求什么帮助）。
+
+            ### **任务三：实用建议和技巧归纳 (Actionable Advice)**
+
+            1. **Top 5 实用建议：** 从评论和回复中提取并整理出五条最具操作性、最实用的建议、技巧或步骤。请以简洁的列表形式呈现。
+            2. **工具/品牌提及：** 提取数据中被提及最频繁的工具、产品或品牌名称，并指出用户对它们的态度。
+
+            ### **任务四：结构化摘要与总结 (Structured Output)**
+
+            请用一段简洁的文字总结上述分析结果，然后以JSON格式输出最关键的洞察，以便后续导入数据库。
+
+            **JSON输出格式：**
+
+            ```json
+            {{
+                "overall_sentiment": "整体情绪百分比",
+                "main_emotions": ["情感1", "情感2", "情感3"],
+                "controversy_points": ["争议点1", "争议点2"],
+                "main_topics": ["主题1", "主题2", "主题3"],
+                "top_pain_points": ["痛点1", "痛点2", "痛点3"],
+                "top_advice": ["建议1", "建议2", "建议3", "建议4", "建议5"],
+                "mentioned_tools": ["工具1", "工具2"],
+                "summary": "综合分析总结"
+            }}
+            ```
+            """
+        
+        return self._call_llm(prompt, provider, "comprehensive_analysis")
+    
+    def analyze_posts_batch(self, posts_data: list, provider: str = "openai", analysis_type: str = "comprehensive") -> Dict[str, Any]:
+        """
+        批量分析帖子数据
+        
+        Args:
+            posts_data: 帖子数据列表
+            provider: API提供商
+            analysis_type: 分析类型 (comprehensive, sentiment, topic, quality)
+            
+        Returns:
+            批量分析结果
+        """
+        try:
+            # 将帖子数据组合成文本
+            combined_text = ""
+            for post in posts_data:
+                combined_text += f"标题: {post.get('title', '')}\n"
+                combined_text += f"内容: {post.get('content', '')}\n"
+                combined_text += f"作者: {post.get('author', '')}\n"
+                combined_text += f"分数: {post.get('score', 0)}\n"
+                combined_text += f"子版块: {post.get('subreddit', '')}\n"
+                combined_text += "-" * 50 + "\n"
+            
+            # 根据分析类型调用相应方法
+            if analysis_type == "comprehensive":
+                return self.analyze_comprehensive(combined_text, provider)
+            elif analysis_type == "sentiment":
+                return self.analyze_sentiment(combined_text, provider)
+            elif analysis_type == "topic":
+                return self.analyze_topic(combined_text, provider)
+            elif analysis_type == "quality":
+                return self.analyze_quality(combined_text, provider)
+            else:
+                return {"error": f"不支持的分析类型: {analysis_type}"}
+                
+        except Exception as e:
+            self.logger.error(f"批量分析失败: {str(e)}")
+            return {"error": str(e)}
+    
+    def _call_llm(self, prompt: str, provider: str, analysis_type: str) -> Dict[str, Any]:
+        """
+        调用大模型API
+        
+        Args:
+            prompt: 提示词
+            provider: API提供商
+            analysis_type: 分析类型
+            
+        Returns:
+            API响应结果
+        """
+        try:
+            if provider == "openai" and self.openai_client:
+                return self._call_openai(prompt, analysis_type)
+            elif provider == "anthropic" and self.anthropic_client:
+                return self._call_anthropic(prompt, analysis_type)
+            elif provider == "deepseek":
+                if self.deepseek_api_key:
+                    return self._call_deepseek(prompt, analysis_type)
+                else:
+                    self.logger.error(f"DeepSeek API密钥未配置")
+                    return {"error": "DeepSeek API密钥未配置"}
+            else:
+                self.logger.error(f"不支持的提供商: {provider}")
+                return {"error": f"不支持的提供商: {provider}"}
+                
+        except Exception as e:
+            self.logger.error(f"调用{provider} API失败: {str(e)}")
+            return {"error": str(e)}
+    
+    def _call_openai(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
+        """调用OpenAI API"""
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=Config.ANALYSIS_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的数据分析师，擅长分析社交媒体内容。"},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            result_text = response.choices[0].message.content
+            return self._parse_json_response(result_text, analysis_type)
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI API调用失败: {str(e)}")
+            return {"error": str(e)}
+    
+    def _call_anthropic(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
+        """调用Anthropic API"""
+        try:
+            response = self.anthropic_client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=1000,
+                temperature=0.3,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            result_text = response.content[0].text
+            return self._parse_json_response(result_text, analysis_type)
+            
+        except Exception as e:
+            self.logger.error(f"Anthropic API调用失败: {str(e)}")
+            return {"error": str(e)}
+    
+    def _parse_json_response(self, response_text: str, analysis_type: str) -> Dict[str, Any]:
+        """解析JSON响应"""
+        try:
+            # 尝试提取JSON部分
+            if "```json" in response_text:
+                json_start = response_text.find("```json") + 7
+                json_end = response_text.find("```", json_start)
+                json_text = response_text[json_start:json_end].strip()
+            elif "{" in response_text and "}" in response_text:
+                json_start = response_text.find("{")
+                json_end = response_text.rfind("}") + 1
+                json_text = response_text[json_start:json_end]
+            else:
+                json_text = response_text
+            
+            result = json.loads(json_text)
+            result["analysis_type"] = analysis_type
+            result["timestamp"] = time.time()
+            return result
+            
+        except json.JSONDecodeError as e:
+            self.logger.error(f"JSON解析失败: {str(e)}")
+            return {
+                "error": "JSON解析失败",
+                "raw_response": response_text,
+                "analysis_type": analysis_type
+            }
+        except Exception as e:
+            self.logger.error(f"响应处理失败: {str(e)}")
+            return {
+                "error": str(e),
+                "raw_response": response_text,
+                "analysis_type": analysis_type
+            }
+    
+    def _call_deepseek(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
+        """调用DeepSeek API"""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的数据分析师，擅长分析社交媒体内容。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.3,
+                "max_tokens": 1000
+            }
+            
+            response = requests.post(
+                f"{self.deepseek_base_url}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                result_text = result['choices'][0]['message']['content']
+                return self._parse_json_response(result_text, analysis_type)
+            else:
+                self.logger.error(f"DeepSeek API调用失败: {response.status_code} - {response.text}")
+                return {"error": f"API调用失败: {response.status_code}"}
+            
+        except Exception as e:
+            self.logger.error(f"DeepSeek API调用失败: {str(e)}")
+            return {"error": str(e)}
