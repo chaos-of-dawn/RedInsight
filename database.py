@@ -212,6 +212,16 @@ class DatabaseManager:
                 )
                 session.add(analysis)
             
+            # 更新对应内容的analyzed状态
+            if content_type == "post":
+                post = session.query(RedditPost).filter(RedditPost.id == content_id).first()
+                if post:
+                    post.analyzed = True
+            elif content_type == "comment":
+                comment = session.query(RedditComment).filter(RedditComment.id == content_id).first()
+                if comment:
+                    comment.analyzed = True
+            
             session.commit()
             self.logger.info(f"成功保存分析结果: {content_id} - {analysis_type}")
             
@@ -336,7 +346,7 @@ class DatabaseManager:
             stats['total_comments'] = session.query(RedditComment).count()
             
             # 各类型分析结果数量
-            analysis_types = ['sentiment', 'topic', 'quality', 'community_report']
+            analysis_types = ['sentiment', 'topic', 'quality', 'comprehensive', 'community_report']
             for analysis_type in analysis_types:
                 count = session.query(AnalysisResult).filter(
                     AnalysisResult.analysis_type == analysis_type
@@ -702,4 +712,59 @@ class DatabaseManager:
         }
         
         self.save_prompt_template(**default_prompt)
+    
+    def get_analysis_results_with_posts(self, start_date: str = None, 
+                                      end_date: str = None,
+                                      subreddits: list = None):
+        """
+        获取分析结果及其关联的帖子数据
+        
+        Args:
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            subreddits: 子版块列表
+            
+        Returns:
+            分析结果列表，包含关联的帖子数据
+        """
+        session = self.get_session()
+        try:
+            from sqlalchemy import and_
+            from datetime import datetime
+            
+            # 构建查询条件 - 使用content_id而不是post_id
+            query = session.query(AnalysisResult).join(RedditPost, AnalysisResult.content_id == RedditPost.id)
+            
+            # 只获取帖子类型的分析结果
+            query = query.filter(AnalysisResult.content_type == 'post')
+            
+            # 日期过滤
+            if start_date:
+                start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+                query = query.filter(RedditPost.scraped_at >= start_datetime)
+            
+            if end_date:
+                end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+                # 结束日期包含整天
+                end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
+                query = query.filter(RedditPost.scraped_at <= end_datetime)
+            
+            # 子版块过滤
+            if subreddits:
+                query = query.filter(RedditPost.subreddit.in_(subreddits))
+            
+            # 按创建时间倒序排列
+            results = query.order_by(AnalysisResult.created_at.desc()).all()
+            
+            # 为每个结果添加帖子对象引用
+            for result in results:
+                result.post = session.query(RedditPost).filter(RedditPost.id == result.content_id).first()
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"获取分析结果失败: {str(e)}")
+            return []
+        finally:
+            session.close()
 

@@ -498,3 +498,225 @@ class DataOrganizer:
         except Exception as e:
             self.logger.error(f"保存文件失败: {str(e)}")
             raise e
+    
+    def generate_excel_report(self, start_date: Optional[str] = None, 
+                            end_date: Optional[str] = None,
+                            subreddits: Optional[List[str]] = None,
+                            output_dir: str = "output") -> str:
+        """
+        生成Excel格式的分析报告
+        
+        Args:
+            start_date: 开始日期 (YYYY-MM-DD)
+            end_date: 结束日期 (YYYY-MM-DD)
+            subreddits: 子版块列表
+            output_dir: 输出目录
+            
+        Returns:
+            生成的Excel文件路径
+        """
+        try:
+            # 获取分析结果数据
+            analysis_results = self.db.get_analysis_results_with_posts(
+                start_date=start_date,
+                end_date=end_date,
+                subreddits=subreddits
+            )
+            
+            if not analysis_results:
+                raise ValueError("没有找到符合条件的分析结果数据")
+            
+            # 创建输出目录
+            output_path = Path(output_dir)
+            output_path.mkdir(exist_ok=True)
+            
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"reddit_analysis_report_{timestamp}.xlsx"
+            file_path = output_path / filename
+            
+            # 创建Excel工作簿
+            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                # 1. 主数据表 - 综合分析结果
+                main_data = self._prepare_main_dataframe(analysis_results)
+                main_data.to_excel(writer, sheet_name='综合分析结果', index=False)
+                
+                # 2. 统计概览表
+                stats_data = self._prepare_statistics_dataframe(analysis_results)
+                stats_data.to_excel(writer, sheet_name='统计概览', index=False)
+                
+                # 3. 按子版块分组统计
+                subreddit_data = self._prepare_subreddit_dataframe(analysis_results)
+                subreddit_data.to_excel(writer, sheet_name='子版块分析', index=False)
+                
+                # 4. 情感分析结果统计
+                sentiment_data = self._prepare_sentiment_dataframe(analysis_results)
+                sentiment_data.to_excel(writer, sheet_name='情感分析', index=False)
+                
+                # 5. 主题分析结果统计
+                topic_data = self._prepare_topic_dataframe(analysis_results)
+                topic_data.to_excel(writer, sheet_name='主题分析', index=False)
+            
+            self.logger.info(f"Excel报告已生成: {file_path}")
+            return str(file_path)
+            
+        except Exception as e:
+            self.logger.error(f"生成Excel报告失败: {str(e)}")
+            raise e
+    
+    def _prepare_main_dataframe(self, analysis_results: List) -> pd.DataFrame:
+        """准备主数据表"""
+        data = []
+        for result in analysis_results:
+            post = result.post
+            data.append({
+                '帖子ID': post.id,
+                '标题': post.title,
+                '作者': post.author,
+                '子版块': post.subreddit,
+                '分数': post.score,
+                '评论数': post.num_comments,
+                '创建时间': post.created_utc.strftime('%Y-%m-%d %H:%M:%S') if post.created_utc else '',
+                '抓取时间': post.scraped_at.strftime('%Y-%m-%d %H:%M:%S') if post.scraped_at else '',
+                '情感分析结果': result.result if result.analysis_type == 'sentiment' else '',
+                '主题分析结果': result.result if result.analysis_type == 'topic' else '',
+                '质量评估结果': result.result if result.analysis_type == 'quality' else '',
+                '综合分析结果': result.result if result.analysis_type == 'comprehensive' else '',
+                'AI提供商': result.model_used or 'unknown',
+                '分析时间': result.created_at.strftime('%Y-%m-%d %H:%M:%S') if result.created_at else ''
+            })
+        
+        return pd.DataFrame(data)
+    
+    def _prepare_statistics_dataframe(self, analysis_results: List) -> pd.DataFrame:
+        """准备统计概览表"""
+        total_posts = len(set(result.content_id for result in analysis_results))
+        total_analyses = len(analysis_results)
+        
+        # 按分析类型统计
+        analysis_types = {}
+        for result in analysis_results:
+            analysis_types[result.analysis_type] = analysis_types.get(result.analysis_type, 0) + 1
+        
+        # 按AI提供商统计
+        providers = {}
+        for result in analysis_results:
+            provider = result.model_used or 'unknown'
+            providers[provider] = providers.get(provider, 0) + 1
+        
+        # 按子版块统计
+        subreddits = {}
+        for result in analysis_results:
+            subreddit = result.post.subreddit
+            subreddits[subreddit] = subreddits.get(subreddit, 0) + 1
+        
+        stats_data = [
+            {'统计项目': '总帖子数', '数量': total_posts},
+            {'统计项目': '总分析次数', '数量': total_analyses},
+            {'统计项目': '平均每帖分析次数', '数量': round(total_analyses / total_posts, 2) if total_posts > 0 else 0}
+        ]
+        
+        # 添加分析类型统计
+        for analysis_type, count in analysis_types.items():
+            stats_data.append({'统计项目': f'{analysis_type}分析次数', '数量': count})
+        
+        # 添加AI提供商统计
+        for provider, count in providers.items():
+            stats_data.append({'统计项目': f'{provider}分析次数', '数量': count})
+        
+        # 添加子版块统计
+        for subreddit, count in subreddits.items():
+            stats_data.append({'统计项目': f'r/{subreddit}帖子数', '数量': count})
+        
+        return pd.DataFrame(stats_data)
+    
+    def _prepare_subreddit_dataframe(self, analysis_results: List) -> pd.DataFrame:
+        """准备子版块分析表"""
+        subreddit_stats = {}
+        
+        for result in analysis_results:
+            subreddit = result.post.subreddit
+            if subreddit not in subreddit_stats:
+                subreddit_stats[subreddit] = {
+                    '子版块': subreddit,
+                    '帖子数': 0,
+                    '总分数': 0,
+                    '总评论数': 0,
+                    '平均分数': 0,
+                    '平均评论数': 0,
+                    '分析次数': 0
+                }
+            
+            stats = subreddit_stats[subreddit]
+            stats['帖子数'] += 1
+            stats['总分数'] += result.post.score or 0
+            stats['总评论数'] += result.post.num_comments or 0
+            stats['分析次数'] += 1
+        
+        # 计算平均值
+        for stats in subreddit_stats.values():
+            if stats['帖子数'] > 0:
+                stats['平均分数'] = round(stats['总分数'] / stats['帖子数'], 2)
+                stats['平均评论数'] = round(stats['总评论数'] / stats['帖子数'], 2)
+        
+        return pd.DataFrame(list(subreddit_stats.values()))
+    
+    def _prepare_sentiment_dataframe(self, analysis_results: List) -> pd.DataFrame:
+        """准备情感分析表"""
+        sentiment_results = [r for r in analysis_results if r.analysis_type == 'sentiment']
+        
+        if not sentiment_results:
+            return pd.DataFrame({'情感类型': [], '数量': [], '百分比': []})
+        
+        # 简单的情感分类统计
+        sentiment_counts = {}
+        for result in sentiment_results:
+            result_text = result.result.lower()
+            if 'positive' in result_text or '积极' in result_text or '正面' in result_text:
+                sentiment_counts['积极'] = sentiment_counts.get('积极', 0) + 1
+            elif 'negative' in result_text or '消极' in result_text or '负面' in result_text:
+                sentiment_counts['消极'] = sentiment_counts.get('消极', 0) + 1
+            else:
+                sentiment_counts['中性'] = sentiment_counts.get('中性', 0) + 1
+        
+        total = sum(sentiment_counts.values())
+        data = []
+        for sentiment, count in sentiment_counts.items():
+            data.append({
+                '情感类型': sentiment,
+                '数量': count,
+                '百分比': round((count / total) * 100, 2) if total > 0 else 0
+            })
+        
+        return pd.DataFrame(data)
+    
+    def _prepare_topic_dataframe(self, analysis_results: List) -> pd.DataFrame:
+        """准备主题分析表"""
+        topic_results = [r for r in analysis_results if r.analysis_type == 'topic']
+        
+        if not topic_results:
+            return pd.DataFrame({'主题': [], '出现次数': [], '百分比': []})
+        
+        # 提取主题关键词
+        topic_keywords = {}
+        for result in topic_results:
+            # 简单的关键词提取
+            result_text = result.result.lower()
+            words = re.findall(r'\b\w{3,}\b', result_text)
+            for word in words:
+                if len(word) > 3:  # 过滤短词
+                    topic_keywords[word] = topic_keywords.get(word, 0) + 1
+        
+        # 取前20个最常见的主题
+        top_topics = sorted(topic_keywords.items(), key=lambda x: x[1], reverse=True)[:20]
+        
+        total = sum(topic_keywords.values())
+        data = []
+        for topic, count in top_topics:
+            data.append({
+                '主题': topic,
+                '出现次数': count,
+                '百分比': round((count / total) * 100, 2) if total > 0 else 0
+            })
+        
+        return pd.DataFrame(data)

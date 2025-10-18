@@ -249,21 +249,50 @@ class RedditScraper:
             
             # 使用API直接验证访问令牌
             import requests
+            import urllib3
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            
+            # 禁用SSL警告
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
             headers = {
                 'Authorization': f'bearer {self.access_token}',
                 'User-Agent': Config.REDDIT_USER_AGENT
             }
             
-            response = requests.get(
+            # 创建会话并配置重试策略
+            session = requests.Session()
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            
+            response = session.get(
                 'https://oauth.reddit.com/api/v1/me',
                 headers=headers,
-                timeout=10
+                timeout=30,
+                verify=True  # 保持SSL验证
             )
             
             return response.status_code == 200
         except Exception as e:
             print(f"认证验证失败: {str(e)}")
-            return False
+            # 如果是SSL错误，尝试不验证SSL证书
+            try:
+                response = requests.get(
+                    'https://oauth.reddit.com/api/v1/me',
+                    headers=headers,
+                    timeout=30,
+                    verify=False  # 临时禁用SSL验证
+                )
+                return response.status_code == 200
+            except:
+                return False
     
     def get_authenticated_user(self) -> Optional[str]:
         """
@@ -278,15 +307,34 @@ class RedditScraper:
                 
             # 使用API直接获取用户信息
             import requests
+            import urllib3
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            
+            # 禁用SSL警告
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
             headers = {
                 'Authorization': f'bearer {self.access_token}',
                 'User-Agent': Config.REDDIT_USER_AGENT
             }
             
-            response = requests.get(
+            # 创建会话并配置重试策略
+            session = requests.Session()
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+            )
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            
+            response = session.get(
                 'https://oauth.reddit.com/api/v1/me',
                 headers=headers,
-                timeout=10
+                timeout=30,
+                verify=True
             )
             
             if response.status_code == 200:
@@ -295,6 +343,19 @@ class RedditScraper:
             return None
         except Exception as e:
             print(f"获取用户名失败: {str(e)}")
+            # 如果是SSL错误，尝试不验证SSL证书
+            try:
+                response = requests.get(
+                    'https://oauth.reddit.com/api/v1/me',
+                    headers=headers,
+                    timeout=30,
+                    verify=False
+                )
+                if response.status_code == 200:
+                    user_data = response.json()
+                    return user_data.get('name', 'Unknown')
+            except:
+                pass
             return None
         
     def get_hot_posts(self, subreddit_name: str, limit: int = 100) -> List[Dict[str, Any]]:

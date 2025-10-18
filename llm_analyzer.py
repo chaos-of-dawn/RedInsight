@@ -25,13 +25,19 @@ class LLMAnalyzer:
         # 初始化OpenAI客户端
         if openai_key:
             openai.api_key = openai_key
-            self.openai_client = openai.OpenAI(api_key=openai_key)
+            self.openai_client = openai.OpenAI(
+                api_key=openai_key,
+                timeout=120  # 设置120秒超时
+            )
         else:
             self.openai_client = None
             
         # 初始化Anthropic客户端
         if anthropic_key:
-            self.anthropic_client = anthropic.Anthropic(api_key=anthropic_key)
+            self.anthropic_client = anthropic.Anthropic(
+                api_key=anthropic_key,
+                timeout=120  # 设置120秒超时
+            )
         else:
             self.anthropic_client = None
         
@@ -481,7 +487,7 @@ class LLMAnalyzer:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=4000
             )
             
             result_text = response.choices[0].message.content
@@ -496,7 +502,7 @@ class LLMAnalyzer:
         try:
             response = self.anthropic_client.messages.create(
                 model="claude-3-sonnet-20240229",
-                max_tokens=1000,
+                max_tokens=4000,
                 temperature=0.3,
                 messages=[
                     {"role": "user", "content": prompt}
@@ -511,7 +517,7 @@ class LLMAnalyzer:
             return {"error": str(e)}
     
     def _parse_json_response(self, response_text: str, analysis_type: str) -> Dict[str, Any]:
-        """解析JSON响应"""
+        """解析JSON响应，带容错机制"""
         try:
             # 尝试提取JSON部分
             if "```json" in response_text:
@@ -525,6 +531,9 @@ class LLMAnalyzer:
             else:
                 json_text = response_text
             
+            # 清理JSON文本
+            json_text = self._clean_json_text(json_text)
+            
             result = json.loads(json_text)
             result["analysis_type"] = analysis_type
             result["timestamp"] = time.time()
@@ -532,10 +541,25 @@ class LLMAnalyzer:
             
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON解析失败: {str(e)}")
+            self.logger.error(f"原始响应: {response_text[:500]}...")
+            
+            # 尝试修复常见的JSON错误
+            try:
+                fixed_json = self._fix_json_errors(json_text)
+                result = json.loads(fixed_json)
+                result["analysis_type"] = analysis_type
+                result["timestamp"] = time.time()
+                result["warning"] = "JSON已自动修复"
+                return result
+            except:
+                pass
+            
             return {
                 "error": "JSON解析失败",
+                "error_details": str(e),
                 "raw_response": response_text,
-                "analysis_type": analysis_type
+                "analysis_type": analysis_type,
+                "suggestion": "请检查大模型返回的JSON格式是否正确"
             }
         except Exception as e:
             self.logger.error(f"响应处理失败: {str(e)}")
@@ -545,45 +569,201 @@ class LLMAnalyzer:
                 "analysis_type": analysis_type
             }
     
+    def _clean_json_text(self, json_text: str) -> str:
+        """清理JSON文本"""
+        # 移除可能的BOM标记
+        if json_text.startswith('\ufeff'):
+            json_text = json_text[1:]
+        
+        # 移除多余的空白字符
+        json_text = json_text.strip()
+        
+        # 确保以{开始，以}结束
+        if not json_text.startswith('{'):
+            json_text = '{' + json_text
+        if not json_text.endswith('}'):
+            json_text = json_text + '}'
+        
+        return json_text
+    
+    def _fix_json_errors(self, json_text: str) -> str:
+        """尝试修复常见的JSON错误"""
+        import re
+        
+        # 修复缺少逗号的问题
+        # 在}后面跟{的情况添加逗号
+        json_text = re.sub(r'}\s*{', '},{', json_text)
+        
+        # 修复缺少逗号的问题
+        # 在"后面跟"的情况添加逗号
+        json_text = re.sub(r'"\s*"', '","', json_text)
+        
+        # 修复缺少逗号的问题
+        # 在数字后面跟"的情况添加逗号
+        json_text = re.sub(r'(\d+)\s*"', r'\1,"', json_text)
+        
+        # 修复缺少逗号的问题
+        # 在true/false后面跟"的情况添加逗号
+        json_text = re.sub(r'(true|false)\s*"', r'\1,"', json_text)
+        
+        # 修复缺少逗号的问题
+        # 在null后面跟"的情况添加逗号
+        json_text = re.sub(r'null\s*"', r'null,"', json_text)
+        
+        # 修复多余的逗号
+        json_text = re.sub(r',\s*}', '}', json_text)
+        json_text = re.sub(r',\s*]', ']', json_text)
+        
+        # 修复中文引号问题
+        json_text = json_text.replace('"', '"').replace('"', '"')
+        json_text = json_text.replace(''', "'").replace(''', "'")
+        
+        # 修复数组元素之间缺少逗号的问题
+        # 在]后面跟[的情况添加逗号
+        json_text = re.sub(r']\s*\[', '],[', json_text)
+        
+        # 修复字符串后面跟[的情况添加逗号
+        json_text = re.sub(r'"\s*\[', '",[', json_text)
+        
+        # 修复字符串后面跟{的情况添加逗号
+        json_text = re.sub(r'"\s*\{', '",{', json_text)
+        
+        # 修复数字后面跟[的情况添加逗号
+        json_text = re.sub(r'(\d+)\s*\[', r'\1,[', json_text)
+        
+        # 修复数字后面跟{的情况添加逗号
+        json_text = re.sub(r'(\d+)\s*\{', r'\1,{', json_text)
+        
+        # 检测和修复截断的JSON
+        if self._is_json_truncated(json_text):
+            json_text = self._fix_truncated_json(json_text)
+        
+        # 修复截断的JSON，尝试补全
+        if json_text.count('{') > json_text.count('}'):
+            json_text += '}' * (json_text.count('{') - json_text.count('}'))
+        if json_text.count('[') > json_text.count(']'):
+            json_text += ']' * (json_text.count('[') - json_text.count(']'))
+        
+        return json_text
+    
+    def _is_json_truncated(self, json_text: str) -> bool:
+        """检测JSON是否被截断"""
+        # 检查是否以不完整的结构结尾
+        json_text = json_text.strip()
+        
+        # 如果以不完整的字符串结尾
+        if json_text.endswith('"') and json_text.count('"') % 2 == 1:
+            return True
+        
+        # 如果以不完整的数组或对象结尾
+        if json_text.endswith(('"', ',', ':', '[', '{')):
+            return True
+        
+        # 如果以省略号结尾
+        if json_text.endswith('...'):
+            return True
+        
+        return False
+    
+    def _fix_truncated_json(self, json_text: str) -> str:
+        """修复被截断的JSON"""
+        json_text = json_text.strip()
+        
+        # 如果以不完整的字符串结尾，补全字符串
+        if json_text.endswith('"') and json_text.count('"') % 2 == 1:
+            # 找到最后一个未闭合的字符串
+            last_quote = json_text.rfind('"')
+            if last_quote > 0:
+                # 在最后一个引号后添加内容
+                json_text = json_text[:last_quote] + '"'
+        
+        # 如果以逗号结尾，移除逗号
+        if json_text.endswith(','):
+            json_text = json_text[:-1]
+        
+        # 如果以冒号结尾，添加null值
+        if json_text.endswith(':'):
+            json_text += ' null'
+        
+        # 如果以不完整的数组结尾
+        if json_text.endswith('['):
+            json_text += ']'
+        
+        # 如果以不完整的对象结尾
+        if json_text.endswith('{'):
+            json_text += '}'
+        
+        # 如果以省略号结尾，移除省略号并补全
+        if json_text.endswith('...'):
+            json_text = json_text[:-3]
+            # 尝试补全最后一个不完整的结构
+            if json_text.endswith('"'):
+                json_text += '"'
+            elif json_text.endswith(','):
+                json_text = json_text[:-1]
+        
+        return json_text
+    
     def _call_deepseek(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
-        """调用DeepSeek API"""
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.deepseek_api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            data = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "你是一个专业的数据分析师，擅长分析社交媒体内容。"
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
+        """调用DeepSeek API，带重试机制"""
+        max_retries = 3
+        retry_delay = 5  # 重试间隔5秒
+        
+        for attempt in range(max_retries):
+            try:
+                headers = {
+                    "Authorization": f"Bearer {self.deepseek_api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                data = {
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "你是一个专业的数据分析师，擅长分析社交媒体内容。"
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
                 "temperature": 0.3,
-                "max_tokens": 1000
-            }
-            
-            response = requests.post(
-                f"{self.deepseek_base_url}/chat/completions",
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                result_text = result['choices'][0]['message']['content']
-                return self._parse_json_response(result_text, analysis_type)
-            else:
-                self.logger.error(f"DeepSeek API调用失败: {response.status_code} - {response.text}")
-                return {"error": f"API调用失败: {response.status_code}"}
-            
-        except Exception as e:
-            self.logger.error(f"DeepSeek API调用失败: {str(e)}")
-            return {"error": str(e)}
+                "max_tokens": 4000
+                }
+                
+                response = requests.post(
+                    f"{self.deepseek_base_url}/chat/completions",
+                    headers=headers,
+                    json=data,
+                    timeout=120  # 增加到120秒超时
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    result_text = result['choices'][0]['message']['content']
+                    return self._parse_json_response(result_text, analysis_type)
+                else:
+                    self.logger.error(f"DeepSeek API调用失败: {response.status_code} - {response.text}")
+                    if attempt < max_retries - 1:
+                        self.logger.info(f"第{attempt + 1}次尝试失败，{retry_delay}秒后重试...")
+                        time.sleep(retry_delay)
+                        continue
+                    return {"error": f"API调用失败: {response.status_code}"}
+                
+            except requests.exceptions.Timeout as e:
+                self.logger.error(f"DeepSeek API超时 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"超时，{retry_delay}秒后重试...")
+                    time.sleep(retry_delay)
+                    continue
+                return {"error": f"请求超时: {str(e)}"}
+            except Exception as e:
+                self.logger.error(f"DeepSeek API调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"错误，{retry_delay}秒后重试...")
+                    time.sleep(retry_delay)
+                    continue
+                return {"error": str(e)}
+        
+        return {"error": "所有重试尝试都失败了"}

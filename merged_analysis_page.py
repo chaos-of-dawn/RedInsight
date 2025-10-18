@@ -128,7 +128,7 @@ def show_data_management():
             st.info("暂无子版块数据")
     
     with col3:
-        batch_limit = st.number_input("批量分析数量", min_value=5, max_value=100, value=20, key="batch_analysis_limit")
+        batch_limit = st.number_input("批量分析数量", min_value=5, max_value=100, value=25, key="batch_analysis_limit")
     
     with col4:
         batch_ai_provider = st.selectbox("批量分析AI提供商", ["openai", "anthropic", "deepseek"], key="batch_ai_provider")
@@ -341,7 +341,7 @@ def show_group_llm_processing(group_key, group_info):
         )
     
     with col_llm2:
-        batch_size = st.number_input("批处理大小", min_value=1, max_value=50, value=10, key=create_unique_key("batch", group_key))
+        batch_size = st.number_input("批处理大小", min_value=1, max_value=100, value=25, key=create_unique_key("batch", group_key))
         use_custom_prompt = st.checkbox("使用自定义提示词", value=False, key=create_unique_key("custom", group_key))
     
     if use_custom_prompt:
@@ -489,7 +489,7 @@ def show_data_packaging():
             )
         
         with col_rule2:
-            batch_size = st.number_input("批处理大小", min_value=1, max_value=50, value=10, key="package_batch_size", help="每批处理的帖子数量")
+            batch_size = st.number_input("批处理大小", min_value=1, max_value=100, value=25, key="package_batch_size", help="每批处理的帖子数量")
             use_custom_prompt = st.checkbox("使用自定义提示词", value=False, key="package_use_custom_prompt", help="是否使用自定义提示词")
         
         if use_custom_prompt:
@@ -902,7 +902,7 @@ def show_manual_processing():
         )
     
     with col_rule2:
-        batch_size = st.number_input("批处理大小", min_value=1, max_value=100, value=20, key="manual_batch_size", help="每批处理的帖子数量")
+        batch_size = st.number_input("批处理大小", min_value=1, max_value=200, value=25, key="manual_batch_size", help="每批处理的帖子数量")
         use_custom_prompt = st.checkbox("使用自定义提示词", key="manual_use_custom_prompt", help="是否使用自定义提示词")
     
     if use_custom_prompt:
@@ -930,22 +930,26 @@ def show_manual_processing():
                 if group_key in grouped_data:
                     group_info = grouped_data[group_key]
                     for post in group_info['posts']:
-                        posts_to_process.append({
-                            'id': post.id,
-                            'title': post.title,
-                            'content': post.selftext or "",
-                            'author': post.author,
-                            'score': post.score,
-                            'subreddit': post.subreddit,
-                            'group': group_key
-                        })
+                        # 只处理未分析的帖子
+                        if not post.analyzed:
+                            posts_to_process.append({
+                                'id': post.id,
+                                'title': post.title,
+                                'content': post.selftext or "",
+                                'author': post.author,
+                                'score': post.score,
+                                'subreddit': post.subreddit,
+                                'group': group_key
+                            })
             
             # 从选中的子版块收集数据
             if selected_subreddits:
                 session = st.session_state.db.get_session()
                 for subreddit in selected_subreddits:
+                    # 只获取未分析的帖子
                     posts = session.query(st.session_state.db.RedditPost).filter(
-                        st.session_state.db.RedditPost.subreddit == subreddit
+                        st.session_state.db.RedditPost.subreddit == subreddit,
+                        st.session_state.db.RedditPost.analyzed == False
                     ).limit(batch_size).all()
                     
                     for post in posts:
@@ -1070,7 +1074,7 @@ def show_results_display():
     try:
         stats = st.session_state.db.get_analysis_statistics()
         total_posts = stats.get('total_posts', 0)
-        total_results = stats.get('sentiment_count', 0) + stats.get('topic_count', 0) + stats.get('quality_count', 0)
+        total_results = stats.get('total_analysis', 0)
         
         # 获取数据包数量
         import os
@@ -1134,7 +1138,7 @@ def show_results_display():
         # 格式选择
         export_format = st.selectbox(
             "导出格式",
-            ["JSON", "CSV"],
+            ["JSON", "CSV", "Excel"],
             help="选择导出文件的格式"
         )
     
@@ -1143,36 +1147,27 @@ def show_results_display():
     col_mode1, col_mode2 = st.columns(2)
     
     with col_mode1:
-        export_mode = st.radio(
-            "选择导出模式",
-            ["全量下载", "预览选择"],
-            help="全量下载：下载所有符合条件的数据\n预览选择：先预览再选择具体数据"
-        )
+        # 简化为只有全量下载模式
+        export_mode = "全量下载"
+        st.info("📥 使用全量下载模式，直接导出所有数据")
     
-    with col_mode2:
-        if export_mode == "预览选择":
-            preview_limit = st.number_input(
-                "每页显示数量",
-                min_value=10,
-                max_value=100,
-                value=50,
-                help="每页显示的数据条数"
-            )
+    # 全量下载模式：显示导出按钮
+    col_btn1, col_btn2 = st.columns(2)
     
-    # 根据导出模式显示不同内容
-    if export_mode == "预览选择":
-        # 预览选择模式：直接显示预览界面
-        try:
-            export_data_batch(selected_data_types, date_range, selected_subreddits, export_format, export_mode, preview_limit)
-        except Exception as e:
-            st.error(f"预览失败: {str(e)}")
-    else:
-        # 全量下载模式：显示导出按钮
+    with col_btn1:
         if st.button("📥 批量导出数据", type="primary"):
             try:
                 export_data_batch(selected_data_types, date_range, selected_subreddits, export_format, export_mode, None)
             except Exception as e:
                 st.error(f"导出失败: {str(e)}")
+    
+    with col_btn2:
+        # Excel导出按钮 - 只在大模型分析数据后显示
+        if st.button("📊 生成Excel分析报告", type="secondary", help="生成包含所有分析结果的Excel报告"):
+            try:
+                export_excel_report(date_range, selected_subreddits)
+            except Exception as e:
+                st.error(f"Excel报告生成失败: {str(e)}")
 
 def export_raw_data(date_range, selected_subreddits, export_format):
     """导出原始数据"""
@@ -1246,50 +1241,51 @@ def export_raw_data(date_range, selected_subreddits, export_format):
         session.close()
 
 def export_analysis_results(date_range, selected_subreddits, export_format):
-    """导出分析结果"""
+    """导出分析结果 - 借鉴Excel导出逻辑"""
     st.write("**正在导出分析结果...**")
     
-    session = st.session_state.db.get_session()
     try:
-        # 获取分析结果
-        query = session.query(st.session_state.db.AnalysisResult)
-        
-        # 日期筛选
-        if date_range[0]:
-            query = query.filter(st.session_state.db.AnalysisResult.created_at >= date_range[0])
-        if date_range[1]:
-            query = query.filter(st.session_state.db.AnalysisResult.created_at <= date_range[1])
-        
-        results = query.all()
+        # 借鉴Excel导出逻辑：直接使用get_analysis_results()获取所有数据
+        results = st.session_state.db.get_analysis_results()
         
         if not results:
-            st.warning("没有找到符合条件的分析结果")
+            st.warning("没有找到分析结果数据")
             return
         
         # 准备数据
         data = []
-        for result in results:
-            # 获取关联的帖子信息
-            post = session.query(st.session_state.db.RedditPost).filter(
-                st.session_state.db.RedditPost.id == result.content_id
-            ).first()
-            
-            # 子版块筛选
-            if selected_subreddits and post and post.subreddit not in selected_subreddits:
-                continue
-            
-            data.append({
-                'analysis_id': result.id,
-                'content_id': result.content_id,
-                'content_type': result.content_type,
-                'analysis_type': result.analysis_type,
-                'model_used': result.model_used,
-                'created_at': result.created_at.isoformat() if result.created_at else None,
-                'result': result.result,
-                'post_title': post.title if post else None,
-                'post_subreddit': post.subreddit if post else None,
-                'post_author': post.author if post else None
-            })
+        session = st.session_state.db.get_session()
+        try:
+            for result in results:
+                # 获取关联的帖子信息
+                post = session.query(st.session_state.db.RedditPost).filter(
+                    st.session_state.db.RedditPost.id == result.content_id
+                ).first()
+                
+                # 日期筛选
+                if date_range[0] and result.created_at and result.created_at.date() < date_range[0]:
+                    continue
+                if date_range[1] and result.created_at and result.created_at.date() > date_range[1]:
+                    continue
+                
+                # 子版块筛选
+                if selected_subreddits and post and post.subreddit not in selected_subreddits:
+                    continue
+                
+                data.append({
+                    'analysis_id': result.id,
+                    'content_id': result.content_id,
+                    'content_type': result.content_type,
+                    'analysis_type': result.analysis_type,
+                    'model_used': result.model_used,
+                    'created_at': result.created_at.isoformat() if result.created_at else None,
+                    'result': result.result,
+                    'post_title': post.title if post else None,
+                    'post_subreddit': post.subreddit if post else None,
+                    'post_author': post.author if post else None
+                })
+        finally:
+            session.close()
         
         if not data:
             st.warning("没有找到符合条件的数据")
@@ -1399,13 +1395,18 @@ def export_data_batch(selected_data_types, date_range, selected_subreddits, expo
         # 全量下载模式
         export_all_data(data_to_export, date_range, selected_subreddits, export_format)
     else:
-        # 预览选择模式
-        preview_and_select_data(data_to_export, date_range, selected_subreddits, export_format, preview_limit)
+        # 预览选择模式 - 导出时使用全量数据
+        preview_and_select_data(data_to_export, date_range, selected_subreddits, export_format, None)
 
 def export_all_data(data_to_export, date_range, selected_subreddits, export_format):
     """全量导出所有选中的数据"""
     import zipfile
     import io
+    
+    # 如果是Excel格式，直接生成Excel报告
+    if export_format == "Excel":
+        export_excel_report(date_range, selected_subreddits)
+        return
     
     zip_buffer = io.BytesIO()
     file_count = 0
@@ -1665,7 +1666,11 @@ def preview_raw_data(date_range, selected_subreddits, export_format, preview_lim
             query = query.filter(st.session_state.db.RedditPost.subreddit.in_(selected_subreddits))
         
         total_count = query.count()
-        posts = query.limit(preview_limit).all()
+        # 如果是导出模式，不限制数量；如果是预览模式，限制数量
+        if preview_limit is None:  # 导出模式，获取所有数据
+            posts = query.all()
+        else:  # 预览模式，限制数量
+            posts = query.limit(preview_limit).all()
         
         st.info(f"找到 {total_count} 条原始数据，显示前 {len(posts)} 条")
         
@@ -1822,8 +1827,12 @@ def preview_analysis_results_with_pagination(date_range, selected_subreddits, ex
             return
         
         # 分页计算
-        total_pages = (total_count + preview_limit - 1) // preview_limit
-        current_page = st.session_state.results_page
+        if preview_limit is None:  # 导出模式，不分页
+            total_pages = 1
+            current_page = 0
+        else:  # 预览模式，计算分页
+            total_pages = (total_count + preview_limit - 1) // preview_limit
+            current_page = st.session_state.results_page
         
         # 分页控制
         col_page1, col_page2, col_page3 = st.columns([1, 2, 1])
@@ -1842,8 +1851,11 @@ def preview_analysis_results_with_pagination(date_range, selected_subreddits, ex
                 st.rerun()
         
         # 获取当前页数据
-        offset = current_page * preview_limit
-        page_results = filtered_results[offset:offset + preview_limit]
+        if preview_limit is None:  # 导出模式，获取所有数据
+            page_results = filtered_results
+        else:  # 预览模式，使用分页
+            offset = current_page * preview_limit
+            page_results = filtered_results[offset:offset + preview_limit]
         
         # 全选功能
         col_select1, col_select2 = st.columns([1, 1])
@@ -1909,7 +1921,11 @@ def preview_analysis_results(date_range, selected_subreddits, export_format, pre
         if date_range[1]:
             query = query.filter(st.session_state.db.AnalysisResult.created_at <= date_range[1])
         
-        results = query.limit(preview_limit).all()
+        # 如果是导出模式，不限制数量；如果是预览模式，限制数量
+        if preview_limit is None:  # 导出模式，获取所有数据
+            results = query.all()
+        else:  # 预览模式，限制数量
+            results = query.limit(preview_limit).all()
         total_count = query.count()
         
         st.info(f"找到 {total_count} 条分析结果，显示前 {len(results)} 条")
@@ -2031,42 +2047,46 @@ def get_raw_data_content(date_range, selected_subreddits, export_format):
         session.close()
 
 def get_analysis_results_content(date_range, selected_subreddits, export_format):
-    """获取分析结果内容"""
-    session = st.session_state.db.get_session()
+    """获取分析结果内容 - 借鉴Excel导出逻辑"""
     try:
-        query = session.query(st.session_state.db.AnalysisResult)
-        
-        if date_range[0]:
-            query = query.filter(st.session_state.db.AnalysisResult.created_at >= date_range[0])
-        if date_range[1]:
-            query = query.filter(st.session_state.db.AnalysisResult.created_at <= date_range[1])
-        
-        results = query.all()
+        # 借鉴Excel导出逻辑：直接使用get_analysis_results()获取所有数据
+        results = st.session_state.db.get_analysis_results()
         
         if not results:
             return None, None
         
         data = []
-        for result in results:
-            post = session.query(st.session_state.db.RedditPost).filter(
-                st.session_state.db.RedditPost.id == result.content_id
-            ).first()
-            
-            if selected_subreddits and post and post.subreddit not in selected_subreddits:
-                continue
-            
-            data.append({
-                'analysis_id': result.id,
-                'content_id': result.content_id,
-                'content_type': result.content_type,
-                'analysis_type': result.analysis_type,
-                'model_used': result.model_used,
-                'created_at': result.created_at.isoformat() if result.created_at else None,
-                'result': result.result,
-                'post_title': post.title if post else None,
-                'post_subreddit': post.subreddit if post else None,
-                'post_author': post.author if post else None
-            })
+        session = st.session_state.db.get_session()
+        try:
+            for result in results:
+                post = session.query(st.session_state.db.RedditPost).filter(
+                    st.session_state.db.RedditPost.id == result.content_id
+                ).first()
+                
+                # 日期筛选
+                if date_range[0] and result.created_at and result.created_at.date() < date_range[0]:
+                    continue
+                if date_range[1] and result.created_at and result.created_at.date() > date_range[1]:
+                    continue
+                
+                # 子版块筛选
+                if selected_subreddits and post and post.subreddit not in selected_subreddits:
+                    continue
+                
+                data.append({
+                    'analysis_id': result.id,
+                    'content_id': result.content_id,
+                    'content_type': result.content_type,
+                    'analysis_type': result.analysis_type,
+                    'model_used': result.model_used,
+                    'created_at': result.created_at.isoformat() if result.created_at else None,
+                    'result': result.result,
+                    'post_title': post.title if post else None,
+                    'post_subreddit': post.subreddit if post else None,
+                    'post_author': post.author if post else None
+                })
+        finally:
+            session.close()
         
         if not data:
             return None, None
@@ -2198,3 +2218,74 @@ def export_selected_packages(selected_packages):
         file_name=zip_filename,
         mime="application/zip"
     )
+
+def export_excel_report(date_range, selected_subreddits):
+    """导出Excel分析报告"""
+    st.write("**正在生成Excel分析报告...**")
+    
+    try:
+        # 检查是否有分析结果数据
+        results = st.session_state.db.get_analysis_results()
+        if not results:
+            st.warning("⚠️ 没有找到分析结果数据，请先进行大模型分析")
+            return
+        
+        # 准备日期参数
+        start_date = None
+        end_date = None
+        if date_range and len(date_range) == 2:
+            start_date = date_range[0].strftime('%Y-%m-%d') if date_range[0] else None
+            end_date = date_range[1].strftime('%Y-%m-%d') if date_range[1] else None
+        
+        # 准备子版块参数
+        subreddits = selected_subreddits if selected_subreddits else None
+        
+        # 初始化数据整理器
+        from data_organizer import DataOrganizer
+        organizer = DataOrganizer(st.session_state.db, st.session_state.analyzer)
+        
+        # 生成Excel报告
+        with st.spinner("正在生成Excel报告，请稍候..."):
+            excel_file_path = organizer.generate_excel_report(
+                start_date=start_date,
+                end_date=end_date,
+                subreddits=subreddits,
+                output_dir="output"
+            )
+        
+        # 读取生成的Excel文件
+        with open(excel_file_path, 'rb') as f:
+            excel_data = f.read()
+        
+        # 生成下载文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"reddit_analysis_report_{timestamp}.xlsx"
+        
+        # 显示成功信息
+        st.success("✅ Excel分析报告生成成功！")
+        
+        # 显示报告预览信息
+        st.info(f"""
+        📊 **报告包含以下工作表：**
+        - **综合分析结果**：包含所有帖子的详细分析结果
+        - **统计概览**：数据统计和分析次数统计
+        - **子版块分析**：按子版块分组的统计数据
+        - **情感分析**：情感分析结果统计
+        - **主题分析**：主题关键词统计
+        
+        📅 **数据范围：** {start_date or '不限'} 至 {end_date or '不限'}
+        🏷️ **子版块：** {', '.join(subreddits) if subreddits else '全部'}
+        """)
+        
+        # 提供下载按钮
+        st.download_button(
+            label="📊 下载Excel分析报告",
+            data=excel_data,
+            file_name=filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="点击下载包含所有分析结果的Excel报告"
+        )
+        
+    except Exception as e:
+        st.error(f"❌ Excel报告生成失败: {str(e)}")
+        st.exception(e)

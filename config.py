@@ -30,7 +30,7 @@ class Config:
     
     # 分析配置
     ANALYSIS_MODEL = os.getenv('ANALYSIS_MODEL', 'gpt-3.5-turbo')
-    BATCH_SIZE = 10
+    BATCH_SIZE = 25  # 根据输出限制4K tokens优化，安全边际20-30个帖子/批
     
     # 日志配置
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
