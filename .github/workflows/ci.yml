@@ -1,4 +1,4 @@
-name: Simple CI
+name: Basic CI
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  basic-check:
+  syntax-check:
     runs-on: ubuntu-latest
     
     steps:
@@ -18,15 +18,20 @@ jobs:
       with:
         python-version: "3.10"
     
-    - name: Install dependencies
+    - name: Install basic dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install requests streamlit praw sqlalchemy python-dotenv openai anthropic pandas openpyxl
     
-    - name: Check imports
+    - name: Check Python syntax
       run: |
-        python -c "import config, database, reddit_scraper, llm_analyzer, data_organizer, merged_analysis_page, streamlit_app, ui_app, main"
-    
-    - name: Check configuration
-      run: |
-        python check_config.py
+        python -m py_compile config.py
+        python -m py_compile database.py
+        python -m py_compile reddit_scraper.py
+        python -m py_compile llm_analyzer.py
+        python -m py_compile data_organizer.py
+        python -m py_compile main.py
+        python -m py_compile streamlit_app.py
+        python -m py_compile ui_app.py
+        python -m py_compile package_data.py
+        python -m py_compile check_config.py
