@@ -21,7 +21,7 @@ jobs:
     - name: Install basic dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests streamlit praw sqlalchemy python-dotenv openai anthropic pandas openpyxl
+        pip install requests streamlit praw sqlalchemy python-dotenv openai anthropic pandas openpyxl scikit-learn sentence-transformers matplotlib numpy
     
     - name: Check Python syntax
       run: |
@@ -32,6 +32,11 @@ jobs:
         python -m py_compile data_organizer.py
         python -m py_compile main.py
         python -m py_compile streamlit_app.py
-        python -m py_compile ui_app.py
-        python -m py_compile package_data.py
-        python -m py_compile check_config.py
+        python -m py_compile merged_analysis_page.py
+        python -m py_compile advanced_analyzer.py
+        python -m py_compile background_analyzer.py
+        python -m py_compile clustering.py
+        python -m py_compile insights_generator.py
+        python -m py_compile structured_extractor.py
+        python -m py_compile vectorizer.py
+        python -m py_compile run_app.py
