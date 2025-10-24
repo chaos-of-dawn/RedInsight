@@ -358,13 +358,24 @@ class RedditScraper:
                 pass
             return None
         
-    def get_hot_posts(self, subreddit_name: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_hot_posts(self, subreddit_name: str, limit: int = 100, time_filter: str = "week",
+                     start_date = None, end_date = None, min_score: int = 0, max_score: int = 0) -> List[Dict[str, Any]]:
         """
         获取指定子版块的热门帖子
         
         Args:
             subreddit_name: 子版块名称
             limit: 获取帖子数量限制
+            time_filter: 时间筛选 (hour, day, week, month, year, all)
+            start_date: 开始日期 (datetime.date对象)
+            end_date: 结束日期 (datetime.date对象)
+            min_score: 最低分数筛选
+            max_score: 最高分数筛选 (0表示无限制)
+            
+        Note:
+            - 当需要分数筛选时，使用Reddit API的top()方法按分数排序
+            - 当不需要分数筛选时，根据time_filter选择top()或hot()方法
+            - 分数筛选在本地进行，但利用了Reddit API的原生排序
             
         Returns:
             帖子数据列表
@@ -376,7 +387,37 @@ class RedditScraper:
             subreddit = self.reddit.subreddit(subreddit_name)
             posts = []
             
-            for post in subreddit.hot(limit=limit):
+            # 根据分数筛选需求选择合适的方法
+            if min_score > 0 or max_score > 0:
+                # 需要分数筛选时，使用top方法按分数排序
+                if time_filter and time_filter != "all":
+                    posts_generator = subreddit.top(time_filter=time_filter, limit=limit*2)  # 获取更多数据用于筛选
+                else:
+                    posts_generator = subreddit.top(time_filter="week", limit=limit*2)  # 默认获取一周的高分帖子
+            else:
+                # 不需要分数筛选时，根据时间筛选选择方法
+                if time_filter and time_filter != "all":
+                    posts_generator = subreddit.top(time_filter=time_filter, limit=limit)
+                else:
+                    posts_generator = subreddit.hot(limit=limit)
+            
+            for post in posts_generator:
+                post_created = datetime.fromtimestamp(post.created_utc)
+                
+                # 日期筛选
+                if start_date:
+                    if post_created.date() < start_date:
+                        continue
+                if end_date:
+                    if post_created.date() > end_date:
+                        continue
+                
+                # 分数筛选
+                if min_score > 0 and post.score < min_score:
+                    continue
+                if max_score > 0 and post.score > max_score:
+                    continue
+                
                 post_data = {
                     'id': post.id,
                     'title': post.title,
@@ -384,7 +425,7 @@ class RedditScraper:
                     'score': post.score,
                     'upvote_ratio': post.upvote_ratio,
                     'num_comments': post.num_comments,
-                    'created_utc': datetime.fromtimestamp(post.created_utc),
+                    'created_utc': post_created,
                     'url': post.url,
                     'selftext': post.selftext,
                     'subreddit': subreddit_name,

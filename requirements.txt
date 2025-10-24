@@ -9,6 +9,9 @@ openai==1.3.7
 anthropic==0.7.8
 aiohttp==3.9.1
 schedule==1.2.0
+# 新增依赖：高级分析功能
+sentence-transformers==2.2.2
+scikit-learn==1.3.2
 # GUI依赖
 streamlit==1.28.2
 # tkinter通常随Python自带，无需额外安装

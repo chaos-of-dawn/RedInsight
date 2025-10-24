@@ -2,11 +2,14 @@
 数据库模块 - 使用SQLAlchemy管理本地数据库
 存储Reddit帖子和评论数据
 """
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import logging
+import json
+import numpy as np
+from typing import List
 from config import Config
 
 Base = declarative_base()
@@ -89,6 +92,106 @@ class PromptTemplate(Base):
     is_default = Column(Boolean, default=False)  # 是否为默认提示词
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class StructuredExtraction(Base):
+    """结构化抽取结果表"""
+    __tablename__ = 'structured_extractions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(String, nullable=False)  # 关联的帖子ID
+    title = Column(Text)
+    content = Column(Text)
+    author = Column(String)
+    subreddit = Column(String)
+    created_utc = Column(DateTime)
+    score = Column(Integer)
+    upvote_ratio = Column(Float)
+    
+    # 结构化字段
+    main_topic = Column(String)
+    pain_points = Column(JSON)  # 存储为JSON数组
+    user_needs = Column(JSON)   # 存储为JSON数组
+    sentiment = Column(String)
+    sentiment_score = Column(Float)
+    key_phrases = Column(JSON)  # 存储为JSON数组
+    mentioned_tools = Column(JSON)  # 存储为JSON数组
+    evidence_sentences = Column(JSON)  # 存储为JSON数组
+    confidence_score = Column(Float)
+    
+    # 元数据
+    extraction_timestamp = Column(DateTime, default=datetime.utcnow)
+    extraction_model = Column(String)
+    
+    # 添加唯一约束
+    __table_args__ = (
+        {'extend_existing': True}
+    )
+
+class VectorizedText(Base):
+    """向量化文本表"""
+    __tablename__ = 'vectorized_texts'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    text_id = Column(String, nullable=False)  # 文本唯一标识
+    text = Column(Text, nullable=False)
+    vector = Column(Text)  # 存储为JSON字符串的向量
+    model_name = Column(String)
+    vectorization_timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    # 添加唯一约束
+    __table_args__ = (
+        {'extend_existing': True}
+    )
+
+class ClusteringResult(Base):
+    """聚类结果表"""
+    __tablename__ = 'clustering_results'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(String, nullable=False)  # 分析批次ID
+    cluster_id = Column(Integer, nullable=False)
+    center_vector = Column(Text)  # 存储为JSON字符串的向量
+    member_indices = Column(JSON)  # 成员索引列表
+    member_count = Column(Integer)
+    avg_similarity = Column(Float)
+    representative_samples = Column(JSON)  # 代表样本
+    keywords = Column(JSON)  # 关键词列表
+    dominant_sentiment = Column(String)
+    avg_sentiment_score = Column(Float)
+    
+    # 元数据
+    clustering_timestamp = Column(DateTime, default=datetime.utcnow)
+    model_name = Column(String)
+    
+    # 添加唯一约束
+    __table_args__ = (
+        {'extend_existing': True}
+    )
+
+class BusinessInsight(Base):
+    """业务洞察表"""
+    __tablename__ = 'business_insights'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(String, nullable=False)  # 分析批次ID
+    total_clusters = Column(Integer)
+    total_samples = Column(Integer)
+    overall_sentiment = Column(String)
+    dominant_themes = Column(JSON)  # 主导主题列表
+    top_pain_points = Column(JSON)  # 主要痛点列表
+    key_opportunities = Column(JSON)  # 关键机会列表
+    strategic_recommendations = Column(JSON)  # 战略建议列表
+    cluster_insights = Column(JSON)  # 簇级洞察
+    action_priority_matrix = Column(JSON)  # 行动优先级矩阵
+    
+    # 元数据
+    analysis_timestamp = Column(DateTime, default=datetime.utcnow)
+    model_name = Column(String)
+    
+    # 添加唯一约束
+    __table_args__ = (
+        {'extend_existing': True}
+    )
 
 class DatabaseManager:
     """数据库管理器"""
@@ -764,6 +867,249 @@ class DatabaseManager:
             
         except Exception as e:
             self.logger.error(f"获取分析结果失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    # ==================== 新增的结构化抽取和聚类相关方法 ====================
+    
+    def save_structured_extraction(self, extraction_data):
+        """保存结构化抽取结果"""
+        session = self.get_session()
+        try:
+            # 检查是否已存在
+            existing = session.query(StructuredExtraction).filter(
+                StructuredExtraction.post_id == extraction_data.post_id
+            ).first()
+            
+            if existing:
+                # 更新现有记录
+                for key, value in extraction_data.__dict__.items():
+                    if hasattr(existing, key) and key != 'id':
+                        setattr(existing, key, value)
+            else:
+                # 创建新记录
+                extraction = StructuredExtraction(
+                    post_id=extraction_data.post_id,
+                    title=extraction_data.title,
+                    content=extraction_data.content,
+                    author=extraction_data.author,
+                    subreddit=extraction_data.subreddit,
+                    created_utc=extraction_data.created_utc,
+                    score=extraction_data.score,
+                    upvote_ratio=extraction_data.upvote_ratio,
+                    main_topic=extraction_data.main_topic,
+                    pain_points=extraction_data.pain_points,
+                    user_needs=extraction_data.user_needs,
+                    sentiment=extraction_data.sentiment,
+                    sentiment_score=extraction_data.sentiment_score,
+                    key_phrases=extraction_data.key_phrases,
+                    mentioned_tools=extraction_data.mentioned_tools,
+                    evidence_sentences=extraction_data.evidence_sentences,
+                    confidence_score=extraction_data.confidence_score,
+                    extraction_timestamp=extraction_data.extraction_timestamp,
+                    extraction_model=extraction_data.extraction_model
+                )
+                session.add(extraction)
+            
+            session.commit()
+            self.logger.info(f"结构化抽取结果已保存: {extraction_data.post_id}")
+            return True
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存结构化抽取结果失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_structured_extractions(self, limit: int = None, subreddits: List[str] = None):
+        """获取结构化抽取结果"""
+        session = self.get_session()
+        try:
+            query = session.query(StructuredExtraction)
+            
+            if subreddits:
+                query = query.filter(StructuredExtraction.subreddit.in_(subreddits))
+            
+            if limit:
+                query = query.limit(limit)
+            
+            return query.order_by(StructuredExtraction.extraction_timestamp.desc()).all()
+            
+        except Exception as e:
+            self.logger.error(f"获取结构化抽取结果失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def save_vectorized_text(self, vectorized_text):
+        """保存向量化文本"""
+        from datetime import datetime
+        session = self.get_session()
+        try:
+            # 确保时间戳是 datetime 对象
+            timestamp = vectorized_text.vectorization_timestamp
+            if not isinstance(timestamp, datetime):
+                if isinstance(timestamp, str):
+                    try:
+                        timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    except:
+                        timestamp = datetime.utcnow()
+                else:
+                    timestamp = datetime.utcnow()
+            
+            # 检查是否已存在
+            existing = session.query(VectorizedText).filter(
+                VectorizedText.text_id == vectorized_text.text_id
+            ).first()
+            
+            if existing:
+                # 更新现有记录
+                existing.text = vectorized_text.text
+                existing.vector = json.dumps(vectorized_text.vector.tolist())
+                existing.model_name = vectorized_text.model_name
+                existing.vectorization_timestamp = timestamp
+            else:
+                # 创建新记录
+                vt = VectorizedText(
+                    text_id=vectorized_text.text_id,
+                    text=vectorized_text.text,
+                    vector=json.dumps(vectorized_text.vector.tolist()),
+                    model_name=vectorized_text.model_name,
+                    vectorization_timestamp=timestamp
+                )
+                session.add(vt)
+            
+            session.commit()
+            return True
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存向量化文本失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_vectorized_texts(self, text_ids: List[str] = None):
+        """获取向量化文本"""
+        session = self.get_session()
+        try:
+            query = session.query(VectorizedText)
+            
+            if text_ids:
+                query = query.filter(VectorizedText.text_id.in_(text_ids))
+            
+            results = query.all()
+            
+            # 解析向量
+            for result in results:
+                if result.vector:
+                    result.vector = np.array(json.loads(result.vector))
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"获取向量化文本失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def save_clustering_result(self, analysis_id: str, cluster_result):
+        """保存聚类结果"""
+        session = self.get_session()
+        try:
+            clustering = ClusteringResult(
+                analysis_id=analysis_id,
+                cluster_id=cluster_result.cluster_id,
+                center_vector=json.dumps(cluster_result.center_vector.tolist()),
+                member_indices=cluster_result.member_indices,
+                member_count=cluster_result.member_count,
+                avg_similarity=cluster_result.avg_similarity,
+                representative_samples=cluster_result.representative_samples,
+                keywords=cluster_result.keywords,
+                dominant_sentiment=cluster_result.dominant_sentiment,
+                avg_sentiment_score=cluster_result.avg_sentiment_score,
+                clustering_timestamp=cluster_result.clustering_timestamp,
+                model_name=cluster_result.model_name
+            )
+            session.add(clustering)
+            session.commit()
+            return True
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存聚类结果失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def save_business_insight(self, analysis_id: str, business_insight):
+        """保存业务洞察"""
+        session = self.get_session()
+        try:
+            insight = BusinessInsight(
+                analysis_id=analysis_id,
+                total_clusters=business_insight.total_clusters,
+                total_samples=business_insight.total_samples,
+                overall_sentiment=business_insight.overall_sentiment,
+                dominant_themes=business_insight.dominant_themes,
+                top_pain_points=business_insight.top_pain_points,
+                key_opportunities=business_insight.key_opportunities,
+                strategic_recommendations=business_insight.strategic_recommendations,
+                cluster_insights=[
+                    {
+                        "cluster_id": ci.cluster_id,
+                        "cluster_name": ci.cluster_name,
+                        "key_insights": ci.key_insights,
+                        "pain_points": ci.pain_points,
+                        "opportunities": ci.opportunities,
+                        "recommended_actions": ci.recommended_actions,
+                        "priority_score": ci.priority_score,
+                        "confidence_level": ci.confidence_level
+                    }
+                    for ci in business_insight.cluster_insights
+                ],
+                action_priority_matrix=business_insight.action_priority_matrix,
+                analysis_timestamp=business_insight.analysis_timestamp,
+                model_name=business_insight.model_name
+            )
+            session.add(insight)
+            session.commit()
+            return True
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存业务洞察失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_latest_business_insight(self):
+        """获取最新的业务洞察"""
+        session = self.get_session()
+        try:
+            return session.query(BusinessInsight).order_by(
+                BusinessInsight.analysis_timestamp.desc()
+            ).first()
+        except Exception as e:
+            self.logger.error(f"获取业务洞察失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_posts(self, limit: int = 100, subreddits: List[str] = None):
+        """获取帖子数据，支持子版块过滤"""
+        session = self.get_session()
+        try:
+            query = session.query(RedditPost)
+            if subreddits:
+                query = query.filter(RedditPost.subreddit.in_(subreddits))
+            
+            posts = query.limit(limit).all()
+            return posts
+        except Exception as e:
+            self.logger.error(f"获取帖子数据失败: {str(e)}")
             return []
         finally:
             session.close()

@@ -1,6 +1,6 @@
 """
-合并的数据分析与结果展示页面
-包含数据管理、整理打包、大模型处理规则设定和手动处理功能
+数据分析与结果展示页面
+包含数据管理、数据整理和本地筛选功能
 """
 import streamlit as st
 import json
@@ -34,16 +34,25 @@ def toggle_state(key, value):
 def create_merged_analysis_page():
     """创建合并的数据分析与结果展示页面"""
     
-    st.header("📊 数据分析与结果展示")
+    st.header("📊 本地数据管理")
+    
+    # 检查后台分析状态
+    try:
+        from background_analyzer import background_analyzer
+        analysis_status = background_analyzer.get_status()
+        
+        if analysis_status.get('running', False):
+            st.info("🔄 后台分析正在进行中，您可以正常使用数据管理功能")
+            st.info(f"分析状态: {analysis_status.get('status', '未知状态')}")
+    except ImportError:
+        pass
     
     if not st.session_state.initialized:
         st.warning("请先配置API密钥并初始化系统")
         return
     
-    # 检查是否有大模型处理规则
-    if 'llm_processing_rules' not in st.session_state or not st.session_state.llm_processing_rules:
-        st.warning("⚠️ 请先在侧边栏选择 '🤖 大模型处理规则' 来设置处理规则，然后再进行数据分析")
-        st.info("💡 大模型处理规则用于定义如何分析和处理您的Reddit数据")
+    # 显示页面说明
+    st.info("💡 此页面提供数据管理、整理和本地筛选功能")
     
     # 创建侧边栏用于导航
     st.sidebar.markdown("### 🎯 功能导航")
@@ -54,8 +63,8 @@ def create_merged_analysis_page():
     
     page_option = st.sidebar.selectbox(
         "选择功能模块",
-        ["📋 数据管理", "📦 数据整理打包", "🤖 大模型处理规则", "🔄 手动数据处理", "📊 结果展示"],
-        index=["📋 数据管理", "📦 数据整理打包", "🤖 大模型处理规则", "🔄 手动数据处理", "📊 结果展示"].index(st.session_state.page_option),
+        ["📋 数据管理", "📦 数据整理打包", "🔍 数据筛选", "📊 结果展示"],
+        index=["📋 数据管理", "📦 数据整理打包", "🔍 数据筛选", "📊 结果展示"].index(st.session_state.page_option) if st.session_state.page_option in ["📋 数据管理", "📦 数据整理打包", "🔍 数据筛选", "📊 结果展示"] else 0,
         help="选择要使用的功能模块"
     )
     
@@ -66,20 +75,110 @@ def create_merged_analysis_page():
     # 在侧边栏显示当前选中的模块
     st.sidebar.markdown(f"**当前模块:** {page_option}")
     
-    # 如果是大模型处理规则，在侧边栏显示提示
-    if page_option == "🤖 大模型处理规则":
-        st.sidebar.info("💡 在这里设置大模型处理数据的规则和提示词模板")
-    
+    # 根据选择的模块显示对应功能
     if st.session_state.page_option == "📋 数据管理":
         show_data_management()
     elif st.session_state.page_option == "📦 数据整理打包":
         show_data_packaging()
-    elif st.session_state.page_option == "🤖 大模型处理规则":
-        show_llm_processing_rules()
-    elif st.session_state.page_option == "🔄 手动数据处理":
-        show_manual_processing()
+    elif st.session_state.page_option == "🔍 数据筛选":
+        show_data_filtering()
     elif st.session_state.page_option == "📊 结果展示":
         show_results_display()
+
+def show_data_filtering():
+    """显示数据筛选功能"""
+    st.subheader("🔍 数据筛选")
+    st.write("根据日期等条件筛选帖子数据")
+    
+    # 日期筛选
+    st.markdown("#### 📅 日期筛选")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("开始日期", value=None, help="筛选此日期之后的帖子")
+    with col2:
+        end_date = st.date_input("结束日期", value=None, help="筛选此日期之前的帖子")
+    
+    # 子版块筛选
+    st.markdown("#### 🏷️ 子版块筛选")
+    try:
+        available_subreddits = st.session_state.db.get_subreddit_list()
+        if available_subreddits:
+            selected_subreddits = st.multiselect(
+                "选择子版块",
+                options=available_subreddits,
+                default=available_subreddits,
+                help="选择要筛选的子版块"
+            )
+        else:
+            st.warning("数据库中没有找到子版块数据")
+            selected_subreddits = []
+    except Exception as e:
+        st.error(f"获取子版块列表失败: {str(e)}")
+        selected_subreddits = []
+    
+    # 应用筛选
+    if st.button("🔍 应用筛选", type="primary"):
+        try:
+            # 获取所有帖子数据
+            all_posts = st.session_state.db.get_posts_with_analysis(limit=10000)
+            
+            if not all_posts:
+                st.warning("数据库中没有找到帖子数据")
+                return
+            
+            # 应用筛选条件
+            filtered_posts = []
+            for post_data in all_posts:
+                post = post_data['post']
+                
+                # 子版块筛选
+                if selected_subreddits and post.subreddit not in selected_subreddits:
+                    continue
+                
+                # 日期筛选
+                if start_date and post.created_utc.date() < start_date:
+                    continue
+                if end_date and post.created_utc.date() > end_date:
+                    continue
+                
+                filtered_posts.append(post_data)
+            
+            # 显示筛选结果
+            st.success(f"✅ 筛选完成！从 {len(all_posts)} 个帖子中筛选出 {len(filtered_posts)} 个符合条件的帖子")
+            
+            # 显示筛选统计
+            if filtered_posts:
+                st.markdown("#### 📈 筛选统计")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("筛选后帖子数", len(filtered_posts))
+                with col2:
+                    avg_score = sum(post_data['post'].score for post_data in filtered_posts) / len(filtered_posts)
+                    st.metric("平均分数", f"{avg_score:.1f}")
+                with col3:
+                    subreddit_counts = {}
+                    for post_data in filtered_posts:
+                        subreddit = post_data['post'].subreddit
+                        subreddit_counts[subreddit] = subreddit_counts.get(subreddit, 0) + 1
+                    st.metric("涉及子版块", len(subreddit_counts))
+                
+                # 显示筛选后的数据
+                st.markdown("#### 📋 筛选结果")
+                for i, post_data in enumerate(filtered_posts[:10]):  # 只显示前10个
+                    post = post_data['post']
+                    with st.expander(f"{i+1}. {post.title[:50]}... (r/{post.subreddit}, 分数: {post.score})"):
+                        st.write(f"**作者**: {post.author}")
+                        st.write(f"**分数**: {post.score}")
+                        st.write(f"**评论数**: {post.num_comments}")
+                        st.write(f"**发布时间**: {post.created_utc}")
+                        st.write(f"**内容**: {post.selftext[:200]}..." if post.selftext else "无内容")
+            
+            # 保存筛选结果到session state
+            st.session_state.filtered_posts = filtered_posts
+            
+        except Exception as e:
+            st.error(f"筛选失败: {str(e)}")
 
 def show_data_management():
     """显示数据管理功能"""

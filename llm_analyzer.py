@@ -448,7 +448,7 @@ class LLMAnalyzer:
     
     def _call_llm(self, prompt: str, provider: str, analysis_type: str) -> Dict[str, Any]:
         """
-        调用大模型API
+        调用大模型API，带自动故障转移
         
         Args:
             prompt: 提示词
@@ -458,24 +458,72 @@ class LLMAnalyzer:
         Returns:
             API响应结果
         """
-        try:
-            if provider == "openai" and self.openai_client:
-                return self._call_openai(prompt, analysis_type)
-            elif provider == "anthropic" and self.anthropic_client:
-                return self._call_anthropic(prompt, analysis_type)
-            elif provider == "deepseek":
-                if self.deepseek_api_key:
-                    return self._call_deepseek(prompt, analysis_type)
-                else:
-                    self.logger.error(f"DeepSeek API密钥未配置")
-                    return {"error": "DeepSeek API密钥未配置"}
-            else:
-                self.logger.error(f"不支持的提供商: {provider}")
-                return {"error": f"不支持的提供商: {provider}"}
+        # 定义可用的提供商优先级列表
+        provider_priority = ["deepseek", "openai", "anthropic"]
+        
+        # 如果指定了provider，将其放在优先级列表首位
+        if provider in provider_priority:
+            provider_priority.remove(provider)
+            provider_priority.insert(0, provider)
+        
+        last_error = None
+        
+        for current_provider in provider_priority:
+            try:
+                self.logger.info(f"尝试使用 {current_provider} API...")
                 
-        except Exception as e:
-            self.logger.error(f"调用{provider} API失败: {str(e)}")
-            return {"error": str(e)}
+                if current_provider == "openai" and self.openai_client:
+                    result = self._call_openai(prompt, analysis_type)
+                    if "error" not in result:
+                        self.logger.info(f"OpenAI API调用成功")
+                        return result
+                    else:
+                        last_error = result.get("error", "未知错误")
+                        self.logger.warning(f"OpenAI API调用失败: {last_error}")
+                        
+                elif current_provider == "anthropic" and self.anthropic_client:
+                    result = self._call_anthropic(prompt, analysis_type)
+                    if "error" not in result:
+                        self.logger.info(f"Anthropic API调用成功")
+                        return result
+                    else:
+                        last_error = result.get("error", "未知错误")
+                        self.logger.warning(f"Anthropic API调用失败: {last_error}")
+                        
+                elif current_provider == "deepseek" and self.deepseek_api_key:
+                    result = self._call_deepseek(prompt, analysis_type)
+                    if "error" not in result:
+                        self.logger.info(f"DeepSeek API调用成功")
+                        return result
+                    else:
+                        last_error = result.get("error", "未知错误")
+                        self.logger.warning(f"DeepSeek API调用失败: {last_error}")
+                else:
+                    self.logger.warning(f"{current_provider} API未配置或不可用")
+                    continue
+                    
+            except Exception as e:
+                last_error = str(e)
+                self.logger.warning(f"{current_provider} API调用异常: {last_error}")
+                continue
+        
+        # 所有提供商都失败了
+        self.logger.error("所有API提供商都不可用")
+        return {
+            "error": "所有API提供商都不可用",
+            "last_error": last_error,
+            "available_providers": [p for p in provider_priority if self._is_provider_available(p)]
+        }
+    
+    def _is_provider_available(self, provider: str) -> bool:
+        """检查提供商是否可用"""
+        if provider == "openai":
+            return self.openai_client is not None
+        elif provider == "anthropic":
+            return self.anthropic_client is not None
+        elif provider == "deepseek":
+            return self.deepseek_api_key is not None
+        return False
     
     def _call_openai(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
         """调用OpenAI API"""
@@ -535,9 +583,12 @@ class LLMAnalyzer:
             json_text = self._clean_json_text(json_text)
             
             result = json.loads(json_text)
-            result["analysis_type"] = analysis_type
-            result["timestamp"] = time.time()
-            return result
+            return {
+                "content": json_text,  # 原始JSON文本
+                "parsed": result,       # 解析后的对象
+                "analysis_type": analysis_type,
+                "timestamp": time.time()
+            }
             
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON解析失败: {str(e)}")
@@ -547,10 +598,13 @@ class LLMAnalyzer:
             try:
                 fixed_json = self._fix_json_errors(json_text)
                 result = json.loads(fixed_json)
-                result["analysis_type"] = analysis_type
-                result["timestamp"] = time.time()
-                result["warning"] = "JSON已自动修复"
-                return result
+                return {
+                    "content": fixed_json,  # 修复后的JSON文本
+                    "parsed": result,       # 解析后的对象
+                    "analysis_type": analysis_type,
+                    "timestamp": time.time(),
+                    "warning": "JSON已自动修复"
+                }
             except:
                 pass
             
@@ -705,15 +759,17 @@ class LLMAnalyzer:
         return json_text
     
     def _call_deepseek(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
-        """调用DeepSeek API，带重试机制"""
-        max_retries = 3
-        retry_delay = 5  # 重试间隔5秒
+        """调用DeepSeek API，带重试机制和指数退避"""
+        max_retries = 5  # 增加重试次数
+        base_delay = 2  # 基础延迟2秒
+        max_delay = 30  # 最大延迟30秒
         
         for attempt in range(max_retries):
             try:
                 headers = {
                     "Authorization": f"Bearer {self.deepseek_api_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "User-Agent": "RedInsight/1.0"
                 }
                 
                 data = {
@@ -728,41 +784,58 @@ class LLMAnalyzer:
                             "content": prompt
                         }
                     ],
-                "temperature": 0.3,
-                "max_tokens": 4000
+                    "temperature": 0.3,
+                    "max_tokens": 4000,
+                    "stream": False
                 }
                 
+                # 使用更长的超时时间，并添加连接超时
                 response = requests.post(
                     f"{self.deepseek_base_url}/chat/completions",
                     headers=headers,
                     json=data,
-                    timeout=120  # 增加到120秒超时
+                    timeout=(30, 180),  # (连接超时, 读取超时)
+                    verify=True
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
                     result_text = result['choices'][0]['message']['content']
+                    self.logger.info(f"DeepSeek API调用成功 (尝试 {attempt + 1})")
                     return self._parse_json_response(result_text, analysis_type)
                 else:
                     self.logger.error(f"DeepSeek API调用失败: {response.status_code} - {response.text}")
                     if attempt < max_retries - 1:
-                        self.logger.info(f"第{attempt + 1}次尝试失败，{retry_delay}秒后重试...")
-                        time.sleep(retry_delay)
+                        # 指数退避策略
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        self.logger.info(f"第{attempt + 1}次尝试失败，{delay}秒后重试...")
+                        time.sleep(delay)
                         continue
-                    return {"error": f"API调用失败: {response.status_code}"}
+                    return {"error": f"API调用失败: {response.status_code} - {response.text}"}
                 
             except requests.exceptions.Timeout as e:
                 self.logger.error(f"DeepSeek API超时 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
                 if attempt < max_retries - 1:
-                    self.logger.info(f"超时，{retry_delay}秒后重试...")
-                    time.sleep(retry_delay)
+                    # 指数退避策略
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    self.logger.info(f"超时，{delay}秒后重试...")
+                    time.sleep(delay)
                     continue
                 return {"error": f"请求超时: {str(e)}"}
+            except requests.exceptions.ConnectionError as e:
+                self.logger.error(f"DeepSeek API连接错误 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    self.logger.info(f"连接错误，{delay}秒后重试...")
+                    time.sleep(delay)
+                    continue
+                return {"error": f"连接错误: {str(e)}"}
             except Exception as e:
                 self.logger.error(f"DeepSeek API调用失败 (尝试 {attempt + 1}/{max_retries}): {str(e)}")
                 if attempt < max_retries - 1:
-                    self.logger.info(f"错误，{retry_delay}秒后重试...")
-                    time.sleep(retry_delay)
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    self.logger.info(f"错误，{delay}秒后重试...")
+                    time.sleep(delay)
                     continue
                 return {"error": str(e)}
         

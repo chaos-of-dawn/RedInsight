@@ -9,10 +9,13 @@ import os
 import time
 from datetime import datetime, timedelta
 import logging
+import io
+import base64
 
 from reddit_scraper import RedditScraper
 from database import DatabaseManager
 from llm_analyzer import LLMAnalyzer
+from advanced_analyzer import AdvancedAnalyzer
 
 # 页面配置
 st.set_page_config(
@@ -75,8 +78,13 @@ if 'initialized' not in st.session_state:
     st.session_state.scraper = None
     st.session_state.db = None
     st.session_state.analyzer = None
+    st.session_state.advanced_analyzer = None
     # 从配置文件加载API密钥
-    st.session_state.api_keys = load_config()
+    try:
+        st.session_state.api_keys = load_config()
+    except Exception as e:
+        st.session_state.api_keys = {}
+        st.warning(f"配置文件加载失败: {str(e)}")
 
 def init_components():
     """初始化组件"""
@@ -87,12 +95,12 @@ def init_components():
             missing_keys = [key for key in required_keys if not st.session_state.api_keys.get(key)]
             
             if missing_keys:
-                st.error(f"缺少必要的Reddit API配置: {', '.join(missing_keys)}。请在侧边栏配置这些信息。")
+                st.warning(f"缺少必要的Reddit API配置: {', '.join(missing_keys)}。请在侧边栏配置这些信息。")
                 return False
             
             # 检查Reddit认证状态
             if not st.session_state.api_keys.get('reddit_access_token'):
-                st.error("Reddit API未认证。请点击'开始Reddit认证'按钮完成OAuth2认证。")
+                st.warning("Reddit API未认证。请点击'开始Reddit认证'按钮完成OAuth2认证。")
                 return False
             
             # 设置环境变量
@@ -114,11 +122,30 @@ def init_components():
             )
             st.session_state.db = DatabaseManager()
             st.session_state.analyzer = LLMAnalyzer(st.session_state.api_keys)
+            # 获取当前配置的provider
+            provider = "openai"  # 默认值
+            if st.session_state.api_keys.get('openai_api_key'):
+                provider = "openai"
+            elif st.session_state.api_keys.get('anthropic_api_key'):
+                provider = "anthropic"
+            elif st.session_state.api_keys.get('deepseek_api_key'):
+                provider = "deepseek"
+            
+            # 初始化高级分析器
+            try:
+                st.session_state.advanced_analyzer = AdvancedAnalyzer(st.session_state.db, st.session_state.analyzer, provider)
+                st.success("✅ 高级分析器初始化成功")
+            except Exception as e:
+                st.error(f"❌ 高级分析器初始化失败: {str(e)}")
+                return False
+            
             st.session_state.initialized = True
             
             return True
         except Exception as e:
             st.error(f"初始化失败: {str(e)}")
+            import traceback
+            st.error(f"详细错误信息: {traceback.format_exc()}")
             return False
     return True
 
@@ -131,8 +158,81 @@ def reinit_analyzer():
         st.error(f"重新初始化分析器失败: {str(e)}")
         return False
 
+def show_analysis_progress():
+    """显示分析进度的函数"""
+    from background_analyzer import background_analyzer
+    from datetime import datetime
+    
+    analysis_status = background_analyzer.get_status()
+    
+    if analysis_status.get('running', False):
+        # 显示进度条
+        progress_value = analysis_status.get('progress', 0)
+        st.progress(progress_value)
+        
+        # 显示状态信息
+        status_text = analysis_status.get('status', '未知状态')
+        st.info(f"📊 状态: {status_text}")
+        
+        # 显示时间信息
+        if 'start_time' in analysis_status:
+            start_time = datetime.fromisoformat(analysis_status['start_time'])
+            elapsed = datetime.now() - start_time
+            
+            # 格式化时间显示
+            total_seconds = int(elapsed.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            
+            if hours > 0:
+                time_str = f"{hours}小时{minutes}分钟{seconds}秒"
+            elif minutes > 0:
+                time_str = f"{minutes}分钟{seconds}秒"
+            else:
+                time_str = f"{seconds}秒"
+            
+            st.info(f"⏱️ 已运行时间: {time_str}")
+        
+        # 显示子版块信息
+        if 'subreddits' in analysis_status:
+            st.info(f"分析子版块: {', '.join(analysis_status['subreddits'])}")
+        
+        # 添加手动刷新按钮
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("🔄 刷新状态", key="refresh_analysis_status"):
+                st.rerun()
+        with col2:
+            st.info("💡 点击'刷新状态'按钮查看最新进度")
+
+def check_completed_analysis():
+    """检查是否有已完成的分析结果并显示通知"""
+    try:
+        from background_analyzer import background_analyzer
+        
+        # 检查是否有已完成的分析
+        if background_analyzer.is_completed():
+            # 检查是否已经显示过通知
+            if not st.session_state.get('analysis_completion_notified', False):
+                st.success("🎉 高级分析已完成！请切换到'高级分析'标签页查看结果。")
+                st.session_state.analysis_completion_notified = True
+        
+        # 检查是否有失败的分析
+        elif background_analyzer.is_failed():
+            if not st.session_state.get('analysis_failure_notified', False):
+                st.error("❌ 高级分析失败！请切换到'高级分析'标签页查看错误信息。")
+                st.session_state.analysis_failure_notified = True
+                    
+    except Exception as e:
+        # 静默处理错误，不影响主界面
+        pass
+
 def main():
     """主函数"""
+    # 检查是否有已完成的分析结果
+    check_completed_analysis()
+    
     # 标题
     st.markdown('<h1 class="main-header">🔍 RedInsight - Reddit数据分析工具</h1>', unsafe_allow_html=True)
     
@@ -189,7 +289,7 @@ def main():
             st.error("❌ Reddit API 未认证")
         
         # 调试信息
-        if st.checkbox("🔍 显示调试信息"):
+        if st.checkbox("🔍 显示调试信息", key="reddit_debug_checkbox"):
             st.json({
                 "Client ID": reddit_client_id[:8] + "..." if reddit_client_id else "未设置",
                 "Client Secret": "已设置" if reddit_client_secret else "未设置",
@@ -440,32 +540,186 @@ def main():
         except:
             st.info("请先配置API密钥并初始化系统")
     
+    # 分析状态检查器
+    st.markdown("---")
+    st.markdown("### 📊 分析状态")
+    
+    try:
+        from background_analyzer import background_analyzer
+        analysis_status = background_analyzer.get_status()
+        
+        if analysis_status.get('running', False):
+            st.warning("🔄 分析进行中...")
+            progress = analysis_status.get('progress', 0)
+            st.progress(progress)
+            st.info(f"状态: {analysis_status.get('status', '未知')}")
+            
+            # 自动刷新按钮
+            if st.button("🔄 刷新状态", key="sidebar_refresh"):
+                st.rerun()
+        elif background_analyzer.is_completed():
+            st.success("✅ 分析已完成")
+            if st.button("🚀 查看结果", key="sidebar_view_results"):
+                st.switch_page("高级分析")
+        elif background_analyzer.is_failed():
+            st.error("❌ 分析失败")
+            if st.button("🔄 重新开始", key="sidebar_restart"):
+                background_analyzer.clear_status()
+                st.rerun()
+        else:
+            st.info("💤 无分析任务")
+    except Exception as e:
+        st.info("💤 无分析任务")
+    
     # 主内容区域
-    tab1, tab2, tab3 = st.tabs(["🏠 首页", "📥 数据抓取", "📊 数据分析与结果展示"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🏠 首页", "📥 数据抓取", "📊 本地数据管理", "🚀 高级分析"])
     
     with tab1:
-        st.header("欢迎使用RedInsight")
+        st.header("🔍 欢迎使用RedInsight")
         st.markdown("""
         RedInsight是一个强大的Reddit数据分析工具，可以帮助您：
         
         - 🔍 **抓取Reddit数据**: 从指定子版块获取帖子和评论
+        - 📊 **本地数据管理**: 管理、筛选和整理本地数据
         - 🤖 **AI智能分析**: 使用大模型进行情感分析、主题分析等
-        - 📊 **可视化展示**: 生成详细的分析报告和统计图表
         - 💾 **本地存储**: 将数据和分析结果保存到本地数据库
+        """)
         
-        ### 使用步骤：
-        1. 在左侧配置API密钥
-        2. 在"数据抓取"标签页设置抓取参数
-        3. 在"数据分析"标签页进行AI分析
-        4. 在"结果展示"标签页查看分析结果
+        # 详细使用说明
+        st.subheader("📖 详细使用说明")
+        
+        with st.expander("🔧 系统配置", expanded=True):
+            st.markdown("""
+            ### 1. API密钥配置
+            在左侧边栏配置以下API密钥：
+            
+            **必需配置：**
+            - 🔑 **Reddit API密钥**: 用于抓取Reddit数据
+              - Client ID: 从Reddit应用设置获取
+              - Client Secret: 从Reddit应用设置获取
+              - Redirect URI: 通常设置为 `http://localhost:8080`
+            
+            **可选配置（至少配置一个）：**
+            - 🤖 **OpenAI API密钥**: 用于GPT模型分析
+            - 🧠 **Anthropic API密钥**: 用于Claude模型分析  
+            - 🚀 **DeepSeek API密钥**: 用于DeepSeek模型分析
+            
+            **配置完成后点击"🚀 初始化系统"按钮**
+            """)
+        
+        with st.expander("📥 数据抓取使用说明", expanded=True):
+            st.markdown("""
+            ### 2. 数据抓取配置
+            
+            **重要注意事项：**
+            
+            #### 🎯 子版块输入格式
+            - ✅ **正确格式**: `MachineLearning` (不带r/前缀)
+            - ❌ **错误格式**: `r/MachineLearning` (不要带r/前缀)
+            - ✅ **多个子版块**: 每行一个，如：
+              ```
+              MachineLearning
+              programming
+              selfhosted
+              ```
+            
+            #### 📊 抓取参数说明
+            - **帖子数量**: 建议50-500个帖子（分析效果最佳）
+            - **时间范围**: 选择合适的时间范围获取数据
+            - **排序方式**: 
+              - `hot`: 热门帖子（推荐）
+              - `new`: 最新帖子
+              - `top`: 热门帖子
+            
+            #### 📅 时间筛选功能
+            - **时间范围选择**: 
+              - `全部时间`: 获取所有时间的帖子
+              - `过去一年`: 获取过去一年的帖子
+              - `过去一月`: 获取过去一月的帖子
+              - `过去一周`: 获取过去一周的帖子（推荐）
+              - `过去一天`: 获取过去一天的帖子
+              - `过去一小时`: 获取过去一小时的帖子
+            - **日期范围**: 可设置具体的开始和结束日期进行精确筛选
+            - **双重筛选**: Reddit API时间筛选 + 本地日期筛选，确保数据精确性
+            
+            #### 📊 分数筛选功能
+            - **最低分数**: 只抓取分数大于等于此值的帖子（如：10分）
+            - **最高分数**: 只抓取分数小于等于此值的帖子（如：1000分）
+            - **智能排序**: 系统会自动使用Reddit API的`top()`方法按分数排序
+            - **高效筛选**: 优先获取高分帖子，减少无效数据传输
+            
+            #### 🔍 搜索功能
+            - **搜索关键词**: 可选，用于筛选特定主题的帖子
+            - **搜索范围**: 可选择在标题、内容或全部中搜索
+            
+            #### ⚠️ 注意事项
+            - 首次抓取可能需要较长时间
+            - 建议在网络状况良好时进行抓取
+            - 抓取的数据会自动保存到本地数据库
+            """)
+        
+        with st.expander("🚀 高级分析使用说明", expanded=True):
+            st.markdown("""
+            ### 3. 高级分析功能
+            
+            #### 🎯 子版块选择
+            - 系统会自动从数据库获取可用的子版块列表
+            - 支持多选子版块进行分析
+            - 无需手动输入，直接从数据库选择
+            
+            #### 📊 分析类型
+            - **快速分析**: 适合50-100个帖子，分析时间较短
+            - **全面分析**: 适合300-500个帖子，分析更深入但时间较长
+            
+            #### 🔄 分析流程
+            1. **结构化抽取**: 从帖子中提取关键信息
+            2. **文本向量化**: 将文本转换为数值向量
+            3. **聚类分析**: 识别相似主题的帖子群组
+            4. **业务洞察**: 生成可执行的业务建议
+            
+            #### 📄 报告格式
+            - **JSON格式**: 结构化数据，便于程序处理
+            - **TXT格式**: 可读报告，包含详细分析结果
+            - **预览功能**: 可直接在界面中查看报告内容
+            """)
+        
+        with st.expander("💡 使用技巧", expanded=False):
+            st.markdown("""
+            ### 4. 使用技巧和最佳实践
+            
+            #### 🎯 数据质量优化
+            - 选择活跃的子版块，数据质量更高
+            - 避免选择过于小众或内容稀少的子版块
+            - 建议选择有明确主题的子版块
+            
+            #### 📊 筛选策略建议
+            - **时间筛选**: 使用"过去一周"获取最新热门内容
+            - **分数筛选**: 设置最低分数（如10分）过滤低质量帖子
+            - **组合筛选**: 时间+分数双重筛选，获取高质量数据
+            - **数据量控制**: 建议每次抓取50-200个帖子，分析效果最佳
+            
+            #### ⚡ 性能优化
+            - 首次使用时会下载AI模型，请耐心等待
+            - 模型下载后会缓存在本地，后续使用更快
+            - 建议在网络状况良好时进行首次分析
+            
+            #### 🔧 故障排除
+            - 如果遇到网络连接问题，系统会自动重试
+            - 模型加载失败时，请检查网络连接
+            - 分析失败时，请检查API密钥配置
+            
+            #### 📊 结果解读
+            - 聚类结果显示了用户讨论的主要主题
+            - 情感分析帮助了解用户态度
+            - 业务洞察提供了可执行的建议
         """)
         
         # 系统状态
-        st.subheader("系统状态")
+        st.subheader("🔍 系统状态")
         if st.session_state.initialized:
-            st.success("✅ 系统已初始化")
+            st.success("✅ 系统已初始化，可以开始使用")
         else:
-            st.warning("⚠️ 系统未初始化，请配置API密钥")
+            st.warning("⚠️ 系统未初始化，请先配置API密钥")
     
     with tab2:
         st.header("📥 数据抓取")
@@ -499,6 +753,56 @@ def main():
                 post_limit = st.number_input("每个子版块帖子数", min_value=1, max_value=1000, value=50)
                 include_comments = st.checkbox("包含评论", value=True)
                 
+                # 新增：日期筛选功能
+                st.subheader("📅 日期筛选")
+                col_date1, col_date2 = st.columns(2)
+                with col_date1:
+                    start_date = st.date_input(
+                        "开始日期", 
+                        value=None,
+                        help="不选择则从30天前开始"
+                    )
+                with col_date2:
+                    end_date = st.date_input(
+                        "结束日期", 
+                        value=None,
+                        help="不选择则到当前时间"
+                    )
+                
+                # 时间范围选择
+                time_filter = st.selectbox(
+                    "时间范围",
+                    ["all", "year", "month", "week", "day", "hour"],
+                    index=2,  # 默认选择"week"
+                    format_func=lambda x: {
+                        "all": "全部时间",
+                        "year": "过去一年", 
+                        "month": "过去一月",
+                        "week": "过去一周",
+                        "day": "过去一天",
+                        "hour": "过去一小时"
+                    }[x],
+                    help="Reddit API的时间筛选参数"
+                )
+                
+                # 新增：分数筛选功能
+                st.subheader("📊 分数筛选")
+                col_score1, col_score2 = st.columns(2)
+                with col_score1:
+                    min_score = st.number_input(
+                        "最低分数", 
+                        min_value=0, 
+                        value=0,
+                        help="只抓取分数大于等于此值的帖子"
+                    )
+                with col_score2:
+                    max_score = st.number_input(
+                        "最高分数", 
+                        min_value=0, 
+                        value=10000,
+                        help="只抓取分数小于等于此值的帖子，0表示无限制"
+                    )
+                
             with col2:
                 st.subheader("搜索配置")
                 search_queries = st.text_area(
@@ -524,7 +828,16 @@ def main():
                                 progress_bar.progress((i + 1) / total_subreddits)
                                 
                                 try:
-                                    posts = st.session_state.scraper.get_hot_posts(subreddit, post_limit)
+                                    # 传递日期筛选参数
+                                    posts = st.session_state.scraper.get_hot_posts(
+                                        subreddit, 
+                                        post_limit, 
+                                        time_filter=time_filter,
+                                        start_date=start_date,
+                                        end_date=end_date,
+                                        min_score=min_score,
+                                        max_score=max_score if max_score > 0 else 0
+                                    )
                                     if posts:
                                         st.session_state.db.save_posts(posts)
                                         st.success(f"✅ r/{subreddit}: {len(posts)} 个帖子")
@@ -574,6 +887,388 @@ def main():
         # 导入合并页面
         from merged_analysis_page import create_merged_analysis_page
         create_merged_analysis_page()
+
+    with tab4:
+        # 高级分析页面
+        st.header("🚀 高级分析功能")
+        
+        # 导入后台分析管理器
+        from background_analyzer import background_analyzer
+        
+        # 检查后台分析状态
+        analysis_status = background_analyzer.get_status()
+        
+        if analysis_status.get('running', False):
+            st.warning("🔄 后台分析正在进行中...")
+            st.info("💡 您可以自由切换到其他界面，分析会在后台继续")
+            
+            # 显示分析进度
+            show_analysis_progress()
+            
+            # 停止分析按钮
+            if st.button("🛑 停止分析", type="secondary"):
+                if background_analyzer.stop_analysis():
+                    st.success("分析已停止")
+                    st.rerun()
+                else:
+                    st.error("停止分析失败")
+            
+            # 添加自动刷新提示
+            st.info("🔄 页面将每5秒自动刷新以显示最新进度")
+            
+            # 使用JavaScript实现自动刷新
+            st.markdown("""
+            <script>
+            setTimeout(function() {
+                window.location.reload();
+            }, 5000);
+            </script>
+            """, unsafe_allow_html=True)
+            
+            return
+        
+        # 检查是否有已完成的分析结果
+        if background_analyzer.is_completed():
+            st.success("✅ 后台分析已完成！")
+            
+            # 显示分析结果
+            result = background_analyzer.get_result()
+            if result and result.get('success'):
+                st.info("💡 分析结果已保存，可以查看详细报告")
+                
+                # 调试信息：显示结果结构
+                with st.expander("🔍 调试信息 - 分析结果结构"):
+                    st.json(result)
+                
+                # 显示结果摘要
+                insights = result.get("insights_summary", {})
+                if insights:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("总帖子数", result.get("total_posts", 0))
+                        st.metric("抽取结果", result.get("extractions_count", 0))
+                    
+                    with col2:
+                        st.metric("聚类数量", result.get("clusters_count", 0))
+                        st.metric("聚类质量", f"{result.get('silhouette_score', 0):.3f}")
+                
+                # 显示导出路径和下载功能
+                export_paths = result.get("export_path", "")
+                if export_paths:
+                    st.info(f"📁 分析报告已保存到: {export_paths}")
+                else:
+                    st.info("📁 分析报告已保存到 ./output/ 目录")
+                    
+                # 下载按钮组
+                st.markdown("#### 📥 下载分析报告")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("📄 下载JSON报告", help="结构化数据，便于程序处理"):
+                        # 查找JSON文件
+                        json_files = [f for f in os.listdir('./output') if f.endswith('.json') and 'business_insights' in f]
+                        if json_files:
+                            latest_json = max(json_files, key=lambda x: os.path.getctime(f'./output/{x}'))
+                            with open(f'./output/{latest_json}', 'r', encoding='utf-8') as f:
+                                json_data = f.read()
+                            st.download_button(
+                                label="📄 下载JSON报告",
+                                data=json_data,
+                                file_name=latest_json,
+                                mime="application/json"
+                            )
+                        else:
+                            st.warning("未找到JSON报告文件")
+                
+                with col2:
+                    if st.button("📝 下载可读报告", help="人类可读的详细分析报告"):
+                        # 查找TXT文件
+                        txt_files = [f for f in os.listdir('./output') if f.endswith('.txt') and 'business_insights' in f]
+                        if txt_files:
+                            latest_txt = max(txt_files, key=lambda x: os.path.getctime(f'./output/{x}'))
+                            with open(f'./output/{latest_txt}', 'r', encoding='utf-8') as f:
+                                txt_data = f.read()
+                            st.download_button(
+                                label="📝 下载可读报告",
+                                data=txt_data,
+                                file_name=latest_txt,
+                                mime="text/plain"
+                            )
+                        else:
+                            st.warning("未找到可读报告文件")
+                
+                with col3:
+                    if st.button("📊 生成可视化图表", help="生成数据可视化图表"):
+                        # 生成可视化图表
+                        try:
+                                # 获取分析数据
+                                analysis_data = result.get("analysis_data", {})
+                                if analysis_data:
+                                    # 创建图表
+                                    import pandas as pd
+                                    import matplotlib.pyplot as plt
+                                    import io
+                                    import base64
+                                    
+                                    # 情感分析图表
+                                    sentiment_data = analysis_data.get("sentiment_distribution", {})
+                                    if sentiment_data:
+                                        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+                                        
+                                        # 情感分布饼图
+                                        labels = list(sentiment_data.keys())
+                                        sizes = list(sentiment_data.values())
+                                        ax1.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
+                                        ax1.set_title('情感分布')
+                                        
+                                        # 主题分布柱状图
+                                        themes = analysis_data.get("dominant_themes", [])
+                                        if themes:
+                                            theme_names = [theme.get("name", "未知主题") for theme in themes[:5]]
+                                            theme_scores = [theme.get("score", 0) for theme in themes[:5]]
+                                            ax2.bar(theme_names, theme_scores)
+                                            ax2.set_title('主要主题分布')
+                                            ax2.set_xticklabels(theme_names, rotation=45, ha='right')
+                                        
+                                        plt.tight_layout()
+                                        
+                                        # 转换为base64
+                                        buffer = io.BytesIO()
+                                        plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight')
+                                        buffer.seek(0)
+                                        image_data = buffer.getvalue()
+                                        buffer.close()
+                                        
+                                        # 提供下载
+                                        st.download_button(
+                                            label="📊 下载可视化图表",
+                                            data=image_data,
+                                            file_name=f"analysis_chart_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                                            mime="image/png"
+                                        )
+                                        
+                                        # 显示图表
+                                        st.image(image_data, caption="分析结果可视化图表")
+                                    else:
+                                        st.warning("没有足够的数据生成可视化图表")
+                                else:
+                                    st.warning("没有找到分析数据")
+                        except Exception as e:
+                            st.error(f"生成可视化图表失败: {str(e)}")
+                            st.info("💡 请确保已安装matplotlib: pip install matplotlib")
+            
+            # 清除结果按钮
+            if st.button("🗑️ 清除分析结果", type="secondary"):
+                background_analyzer.clear_status()
+                st.success("分析结果已清除")
+                st.rerun()
+            
+            return
+        
+        # 检查是否有失败的分析
+        if background_analyzer.is_failed():
+            st.error("❌ 分析失败")
+            error_msg = analysis_status.get('error')
+            if error_msg is None or error_msg == 'None':
+                error_msg = '未知错误'
+            st.error(f"错误信息: {error_msg}")
+            
+            # 显示调试信息
+            with st.expander("🔍 调试信息"):
+                st.json(analysis_status)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔄 重新开始", type="primary"):
+                    background_analyzer.clear_status()
+                    st.rerun()
+            with col2:
+                if st.button("🗑️ 清除所有状态"):
+                    background_analyzer.clear_status()
+                    st.session_state.analysis_running = False
+                    st.session_state.analysis_progress = 0
+                    st.session_state.analysis_status = "无分析任务"
+                    st.session_state.analysis_completed = False
+                    st.rerun()
+            
+            return
+        
+        st.markdown("""
+        高级分析功能使用AI技术对Reddit数据进行深度挖掘，包括：
+        - **结构化抽取**：从帖子中提取主题、痛点、需求等结构化信息
+        - **智能聚类**：将相似内容自动分组，发现隐藏模式
+        - **业务洞察**：生成可执行的商业建议和机会发现
+        """)
+        
+        # 数据源说明
+        st.info("""
+        📋 **数据来源说明**：
+        - 高级分析功能使用数据库中已存储的Reddit帖子数据
+        - 请先在"📥 数据抓取"标签页中抓取数据
+        - 数据会自动存储到本地数据库
+        - 分析时根据指定的子版块从数据库读取对应数据
+        """)
+        
+        if st.session_state.initialized:
+            if st.session_state.advanced_analyzer is None:
+                st.error("❌ 高级分析器未初始化")
+                st.info("💡 请重新初始化系统")
+                if st.button("🔄 重新初始化"):
+                    st.session_state.initialized = False
+                    st.rerun()
+                return
+            # 分析配置
+            st.subheader("📋 分析配置")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 🎯 分析范围")
+                
+                # 获取数据库中的子版块列表
+                try:
+                    available_subreddits = st.session_state.db.get_subreddit_list()
+                    if available_subreddits:
+                        st.info(f"📊 数据库中共有 {len(available_subreddits)} 个子版块")
+                        
+                        # 显示子版块选择器
+                        selected_subreddits = st.multiselect(
+                            "选择要分析的子版块",
+                            options=available_subreddits,
+                            default=available_subreddits[:3] if len(available_subreddits) >= 3 else available_subreddits,
+                            help="从数据库中选择要分析的子版块"
+                        )
+                        
+                        # 将选中的子版块转换为文本格式
+                        if selected_subreddits:
+                            subreddits_input = "\n".join(selected_subreddits)
+                        else:
+                            subreddits_input = ""
+                    else:
+                        st.warning("⚠️ 数据库中没有找到子版块数据")
+                        st.info("💡 请先在'📥 数据抓取'标签页中抓取数据")
+                        subreddits_input = ""
+                        selected_subreddits = []
+                except Exception as e:
+                    st.error(f"❌ 获取子版块列表失败: {str(e)}")
+                    subreddits_input = ""
+                    selected_subreddits = []
+                
+                # 数据预览按钮
+                if st.button("📊 预览可用数据", key="preview_data_btn"):
+                    if selected_subreddits:
+                        st.markdown("#### 📈 数据统计")
+                        total_posts = 0
+                        for subreddit in selected_subreddits:
+                            try:
+                                posts_data = st.session_state.db.get_posts_with_analysis(subreddit=subreddit, limit=1000)
+                                post_count = len(posts_data) if posts_data else 0
+                                total_posts += post_count
+                                st.write(f"📁 r/{subreddit}: {post_count} 条帖子")
+                            except Exception as e:
+                                st.write(f"❌ r/{subreddit}: 查询失败 - {str(e)}")
+                        
+                        st.success(f"📊 总计: {total_posts} 条帖子")
+                        
+                        if total_posts > 0:
+                            # 显示最近的一些帖子示例
+                            st.markdown("#### 📝 数据示例")
+                            try:
+                                recent_posts_data = st.session_state.db.get_posts_with_analysis(limit=5)
+                                for i, post_data in enumerate(recent_posts_data[:3]):
+                                    post = post_data['post']
+                                    st.write(f"{i+1}. **{post.title[:50]}...** (r/{post.subreddit})")
+                            except Exception as e:
+                                st.write(f"无法获取帖子示例: {str(e)}")
+                    else:
+                        st.warning("请先选择要分析的子版块")
+                
+                analysis_type = st.selectbox(
+                    "分析类型",
+                    ["quick", "comprehensive"],
+                    format_func=lambda x: "快速分析 (50个帖子)" if x == "quick" else "全面分析 (500个帖子)"
+                )
+                
+                limit = st.number_input(
+                    "数据限制",
+                    min_value=10,
+                    max_value=1000,
+                    value=50 if analysis_type == "quick" else 500,
+                    help="分析的最大帖子数量"
+                )
+            
+            with col2:
+                st.markdown("#### ⚙️ 技术配置")
+                
+                # 显示当前配置
+                st.info("🔧 当前配置:")
+                
+                # 动态检测配置的API提供商
+                configured_provider = "未配置"
+                if st.session_state.api_keys.get('openai_api_key'):
+                    configured_provider = "OpenAI"
+                elif st.session_state.api_keys.get('anthropic_api_key'):
+                    configured_provider = "Anthropic"
+                elif st.session_state.api_keys.get('deepseek_api_key'):
+                    configured_provider = "DeepSeek"
+                
+                # 显示配置状态
+                st.info(f"- 大模型提供商: {configured_provider}")
+                
+                # 调试信息（可选）
+                if st.checkbox("🔍 显示调试信息", key="debug_info_checkbox"):
+                    st.write("API密钥状态:")
+                    st.write(f"- OpenAI: {'已配置' if st.session_state.api_keys.get('openai_api_key') else '未配置'}")
+                    st.write(f"- Anthropic: {'已配置' if st.session_state.api_keys.get('anthropic_api_key') else '未配置'}")
+                    st.write(f"- DeepSeek: {'已配置' if st.session_state.api_keys.get('deepseek_api_key') else '未配置'}")
+                st.info(f"- 向量化模型: all-MiniLM-L6-v2")
+                st.info(f"- 聚类算法: KMeans")
+                
+                # 数据要求提示
+                st.warning("⚠️ 数据要求:")
+                st.warning("- 快速分析: ≥50条帖子")
+                st.warning("- 全面分析: ≥300条帖子")
+                st.warning("- 建议数据量: 100-500条帖子")
+            
+            # 开始分析按钮
+            st.markdown("---")
+            if st.button("🚀 开始后台分析", type="primary", use_container_width=True):
+                if selected_subreddits:
+                    # 检查数据量
+                    total_posts = 0
+                    for subreddit in selected_subreddits:
+                        try:
+                            posts_data = st.session_state.db.get_posts_with_analysis(subreddit=subreddit, limit=1000)
+                            post_count = len(posts_data) if posts_data else 0
+                            total_posts += post_count
+                            st.write(f"📁 r/{subreddit}: {post_count} 条帖子")
+                        except Exception as e:
+                            st.write(f"❌ 查询r/{subreddit}数据失败: {str(e)}")
+                    
+                    if total_posts < 50:
+                        st.error(f"❌ 数据量不足！当前只有 {total_posts} 条帖子，建议至少 50 条")
+                        st.info("💡 请先在'数据抓取'标签页中抓取更多数据")
+                    else:
+                        st.info(f"📊 检测到 {total_posts} 条帖子，开始后台分析...")
+                        
+                        # 启动后台分析
+                        if background_analyzer.start_analysis(
+                            advanced_analyzer=st.session_state.advanced_analyzer,
+                            subreddits=selected_subreddits,
+                            limit=limit
+                        ):
+                            st.success("✅ 后台分析已启动！")
+                            st.info("💡 您可以自由切换到其他界面，分析会在后台继续")
+                            st.rerun()
+                        else:
+                            st.error("❌ 启动后台分析失败")
+                else:
+                    st.error("请先选择要分析的子版块")
+        
+        else:
+            st.warning("请先配置API密钥并初始化系统")
 
 if __name__ == "__main__":
     main()

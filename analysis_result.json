@@ -1,0 +1,33 @@
+{
+  "success": true,
+  "analysis_id": "2fbda721-cf9a-43c1-9a81-776ea586bdaa",
+  "total_posts": 50,
+  "extractions_count": 50,
+  "clusters_count": 2,
+  "silhouette_score": 0.09817268699407578,
+  "export_path": "./output/business_insights_2fbda721-cf9a-43c1-9a81-776ea586bdaa_20251024_093949.json, ./output/business_insights_2fbda721-cf9a-43c1-9a81-776ea586bdaa_20251024_093949.txt",
+  "insights_summary": {
+    "overall_sentiment": "neutral",
+    "dominant_themes": [
+      "产品质量讨论",
+      "使用年限关注",
+      "保修服务",
+      "品牌偏好",
+      "情感表达"
+    ],
+    "top_pain_points": [
+      "产品质量稳定性不足",
+      "产品耐用性担忧",
+      "保修政策不明确",
+      "品牌选择困惑",
+      "长期使用可靠性问题"
+    ],
+    "key_opportunities": [
+      "加强产品质量控制",
+      "完善保修服务体系",
+      "建立品牌信任度",
+      "提升产品耐用性",
+      "优化客户长期体验"
+    ]
+  }
+}
