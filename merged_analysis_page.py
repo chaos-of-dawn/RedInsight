@@ -63,14 +63,15 @@ def create_merged_analysis_page():
     
     page_option = st.sidebar.selectbox(
         "选择功能模块",
-        ["📋 数据管理", "📦 数据整理打包", "🔍 数据筛选", "📊 结果展示"],
-        index=["📋 数据管理", "📦 数据整理打包", "🔍 数据筛选", "📊 结果展示"].index(st.session_state.page_option) if st.session_state.page_option in ["📋 数据管理", "📦 数据整理打包", "🔍 数据筛选", "📊 结果展示"] else 0,
+        ["📋 数据管理", "📦 数据整理打包", "📊 结果展示"],
+        index=["📋 数据管理", "📦 数据整理打包", "📊 结果展示"].index(st.session_state.page_option) if st.session_state.page_option in ["📋 数据管理", "📦 数据整理打包", "📊 结果展示"] else 0,
         help="选择要使用的功能模块"
     )
     
     # 更新页面选项
     if page_option != st.session_state.page_option:
         st.session_state.page_option = page_option
+        st.rerun()
     
     # 在侧边栏显示当前选中的模块
     st.sidebar.markdown(f"**当前模块:** {page_option}")
@@ -80,105 +81,8 @@ def create_merged_analysis_page():
         show_data_management()
     elif st.session_state.page_option == "📦 数据整理打包":
         show_data_packaging()
-    elif st.session_state.page_option == "🔍 数据筛选":
-        show_data_filtering()
     elif st.session_state.page_option == "📊 结果展示":
         show_results_display()
-
-def show_data_filtering():
-    """显示数据筛选功能"""
-    st.subheader("🔍 数据筛选")
-    st.write("根据日期等条件筛选帖子数据")
-    
-    # 日期筛选
-    st.markdown("#### 📅 日期筛选")
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("开始日期", value=None, help="筛选此日期之后的帖子")
-    with col2:
-        end_date = st.date_input("结束日期", value=None, help="筛选此日期之前的帖子")
-    
-    # 子版块筛选
-    st.markdown("#### 🏷️ 子版块筛选")
-    try:
-        available_subreddits = st.session_state.db.get_subreddit_list()
-        if available_subreddits:
-            selected_subreddits = st.multiselect(
-                "选择子版块",
-                options=available_subreddits,
-                default=available_subreddits,
-                help="选择要筛选的子版块"
-            )
-        else:
-            st.warning("数据库中没有找到子版块数据")
-            selected_subreddits = []
-    except Exception as e:
-        st.error(f"获取子版块列表失败: {str(e)}")
-        selected_subreddits = []
-    
-    # 应用筛选
-    if st.button("🔍 应用筛选", type="primary"):
-        try:
-            # 获取所有帖子数据
-            all_posts = st.session_state.db.get_posts_with_analysis(limit=10000)
-            
-            if not all_posts:
-                st.warning("数据库中没有找到帖子数据")
-                return
-            
-            # 应用筛选条件
-            filtered_posts = []
-            for post_data in all_posts:
-                post = post_data['post']
-                
-                # 子版块筛选
-                if selected_subreddits and post.subreddit not in selected_subreddits:
-                    continue
-                
-                # 日期筛选
-                if start_date and post.created_utc.date() < start_date:
-                    continue
-                if end_date and post.created_utc.date() > end_date:
-                    continue
-                
-                filtered_posts.append(post_data)
-            
-            # 显示筛选结果
-            st.success(f"✅ 筛选完成！从 {len(all_posts)} 个帖子中筛选出 {len(filtered_posts)} 个符合条件的帖子")
-            
-            # 显示筛选统计
-            if filtered_posts:
-                st.markdown("#### 📈 筛选统计")
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("筛选后帖子数", len(filtered_posts))
-                with col2:
-                    avg_score = sum(post_data['post'].score for post_data in filtered_posts) / len(filtered_posts)
-                    st.metric("平均分数", f"{avg_score:.1f}")
-                with col3:
-                    subreddit_counts = {}
-                    for post_data in filtered_posts:
-                        subreddit = post_data['post'].subreddit
-                        subreddit_counts[subreddit] = subreddit_counts.get(subreddit, 0) + 1
-                    st.metric("涉及子版块", len(subreddit_counts))
-                
-                # 显示筛选后的数据
-                st.markdown("#### 📋 筛选结果")
-                for i, post_data in enumerate(filtered_posts[:10]):  # 只显示前10个
-                    post = post_data['post']
-                    with st.expander(f"{i+1}. {post.title[:50]}... (r/{post.subreddit}, 分数: {post.score})"):
-                        st.write(f"**作者**: {post.author}")
-                        st.write(f"**分数**: {post.score}")
-                        st.write(f"**评论数**: {post.num_comments}")
-                        st.write(f"**发布时间**: {post.created_utc}")
-                        st.write(f"**内容**: {post.selftext[:200]}..." if post.selftext else "无内容")
-            
-            # 保存筛选结果到session state
-            st.session_state.filtered_posts = filtered_posts
-            
-        except Exception as e:
-            st.error(f"筛选失败: {str(e)}")
 
 def show_data_management():
     """显示数据管理功能"""
@@ -552,58 +456,6 @@ def show_data_packaging():
             key="global_use_llm_summary"
         )
         
-        # 是否直接传递给大模型分析
-        direct_llm_analysis = st.checkbox(
-            "直接传递给大模型分析",
-            value=False,
-            help="整理打包后直接使用大模型进行分析",
-            key="global_direct_llm_analysis"
-        )
-    
-    # 显示处理规则选择（无论是否选择直接分析）
-    st.write("**🤖 大模型处理规则选择**")
-    
-    processing_rules = st.session_state.get('llm_processing_rules', {})
-    if not processing_rules:
-        st.warning("⚠️ 请先设置处理规则")
-        if st.button("🚀 立即设置处理规则", type="primary"):
-            st.session_state.page_option = "🤖 大模型处理规则"
-            st.rerun()
-    else:
-        col_rule1, col_rule2 = st.columns(2)
-        
-        with col_rule1:
-            selected_rule = st.selectbox(
-                "选择处理规则",
-                list(processing_rules.keys()),
-                key="package_selected_rule",
-                help="选择要使用的处理规则"
-            )
-            
-            ai_provider = st.selectbox(
-                "AI提供商",
-                ["openai", "anthropic", "deepseek"],
-                key="package_ai_provider",
-                help="选择AI提供商"
-            )
-        
-        with col_rule2:
-            batch_size = st.number_input("批处理大小", min_value=1, max_value=100, value=25, key="package_batch_size", help="每批处理的帖子数量")
-            use_custom_prompt = st.checkbox("使用自定义提示词", value=False, key="package_use_custom_prompt", help="是否使用自定义提示词")
-        
-        if use_custom_prompt:
-            custom_prompt = st.text_area(
-                "自定义提示词",
-                value=processing_rules[selected_rule]['prompt_template'],
-                height=200,
-                key="package_custom_prompt",
-                help="自定义提示词模板，使用{text}作为数据占位符"
-            )
-        else:
-            custom_prompt = processing_rules[selected_rule]['prompt_template']
-        
-        # 显示选中的规则信息
-        st.info(f"📋 已选择规则: **{selected_rule}** | 分析类型: **{processing_rules[selected_rule]['analysis_type']}** | AI提供商: **{ai_provider}**")
     
     # 数据整理和打包按钮
     if st.button("🚀 开始数据整理和打包", type="primary"):
@@ -973,11 +825,6 @@ def show_manual_processing():
     if not processing_rules:
         st.warning("⚠️ 请先在侧边栏选择 '🤖 大模型处理规则' 来设置处理规则")
         st.info("💡 设置好规则后，您就可以在这里选择规则来处理数据了")
-        
-        # 添加快速跳转按钮
-        if st.button("🚀 立即设置处理规则", type="primary"):
-            st.session_state.page_option = "🤖 大模型处理规则"
-            st.rerun()
         return
     
     # 显示可用的规则
@@ -1129,41 +976,6 @@ def show_manual_processing():
 def show_results_display():
     """显示结果展示功能"""
     st.subheader("📊 结果展示")
-    
-    # 分析结果统计
-    st.subheader("🔍 分析结果统计")
-    
-    try:
-        results = st.session_state.db.get_analysis_results()
-        
-        if results:
-            # 按分析类型分组统计
-            analysis_stats = {}
-            for result in results:
-                if result.analysis_type not in analysis_stats:
-                    analysis_stats[result.analysis_type] = 0
-                analysis_stats[result.analysis_type] += 1
-            
-            # 显示统计图表
-            if analysis_stats:
-                st.bar_chart(analysis_stats)
-            
-            # 最近分析结果
-            st.write("**最近分析结果:**")
-            recent_results = results[-20:]  # 最近20条
-            
-            for result in recent_results:
-                with st.expander(f"{result.analysis_type} - {result.content_id[:20]}... ({result.created_at.strftime('%m-%d %H:%M')})"):
-                    try:
-                        result_data = json.loads(result.result)
-                        st.json(result_data)
-                    except:
-                        st.text(result.result)
-        else:
-            st.info("暂无分析结果")
-            
-    except Exception as e:
-        st.error(f"获取分析结果失败: {str(e)}")
     
     # 数据导出区域
     st.write("---")
