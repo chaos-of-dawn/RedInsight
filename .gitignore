@@ -55,6 +55,17 @@ data/
 exports/
 packages/
 
+# Analysis results and cache
+analysis_result.json
+analysis_status.json
+vector_cache/
+*.pkl
+*.cache
+
+# RedInsight specific
+redinsight.db
+*.db
+
 # IDE
 .vscode/
 .idea/
