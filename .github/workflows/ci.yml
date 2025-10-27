@@ -39,5 +39,4 @@ jobs:
         python -m py_compile insights_generator.py
         python -m py_compile structured_extractor.py
         python -m py_compile vectorizer.py
-        python -m py_compile keyword_extractor.py
         python -m py_compile run_app.py
