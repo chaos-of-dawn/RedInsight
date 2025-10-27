@@ -71,20 +71,28 @@ class TextVectorizer:
     
     def _load_cache(self):
         """加载向量缓存"""
-        cache_file = os.path.join(self.cache_dir, f"{self.model_name}_cache.pkl")
-        if os.path.exists(cache_file):
-            try:
+        try:
+            # 确保缓存目录存在
+            os.makedirs(self.cache_dir, exist_ok=True)
+            
+            cache_file = os.path.join(self.cache_dir, f"{self.model_name}_cache.pkl")
+            if os.path.exists(cache_file):
                 with open(cache_file, 'rb') as f:
                     self.vector_cache = pickle.load(f)
                 logger.info(f"加载向量缓存: {len(self.vector_cache)} 条记录")
-            except Exception as e:
-                logger.warning(f"缓存加载失败: {str(e)}")
+            else:
                 self.vector_cache = {}
+        except Exception as e:
+            logger.warning(f"缓存加载失败: {str(e)}")
+            self.vector_cache = {}
     
     def _save_cache(self):
         """保存向量缓存"""
-        cache_file = os.path.join(self.cache_dir, f"{self.model_name}_cache.pkl")
         try:
+            # 确保缓存目录存在
+            os.makedirs(self.cache_dir, exist_ok=True)
+            
+            cache_file = os.path.join(self.cache_dir, f"{self.model_name}_cache.pkl")
             with open(cache_file, 'wb') as f:
                 pickle.dump(self.vector_cache, f)
             logger.info(f"保存向量缓存: {len(self.vector_cache)} 条记录")

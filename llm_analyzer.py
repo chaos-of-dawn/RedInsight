@@ -2,7 +2,11 @@
 大模型分析模块 - 接入OpenAI和Anthropic API进行数据分析
 """
 import openai
-import anthropic
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 import logging
 from typing import List, Dict, Any, Optional
 import json
@@ -24,21 +28,28 @@ class LLMAnalyzer:
         
         # 初始化OpenAI客户端
         if openai_key:
-            openai.api_key = openai_key
-            self.openai_client = openai.OpenAI(
-                api_key=openai_key,
-                timeout=120  # 设置120秒超时
-            )
+            try:
+                self.openai_client = openai.OpenAI(
+                    api_key=openai_key
+                )
+            except Exception as e:
+                self.logger.warning(f"OpenAI客户端初始化失败: {e}")
+                self.openai_client = None
         else:
             self.openai_client = None
             
         # 初始化Anthropic客户端
-        if anthropic_key:
-            self.anthropic_client = anthropic.Anthropic(
-                api_key=anthropic_key,
-                timeout=120  # 设置120秒超时
-            )
+        if anthropic_key and ANTHROPIC_AVAILABLE:
+            try:
+                self.anthropic_client = anthropic.Anthropic(
+                    api_key=anthropic_key
+                )
+            except Exception as e:
+                self.logger.warning(f"Anthropic客户端初始化失败: {e}")
+                self.anthropic_client = None
         else:
+            if anthropic_key and not ANTHROPIC_AVAILABLE:
+                self.logger.warning("Anthropic模块未安装，跳过Anthropic客户端初始化")
             self.anthropic_client = None
         
         # DeepSeek API配置
@@ -644,6 +655,9 @@ class LLMAnalyzer:
         """尝试修复常见的JSON错误"""
         import re
         
+        # 移除可能的截断标记
+        json_text = json_text.replace('...', '')
+        
         # 修复缺少逗号的问题
         # 在}后面跟{的情况添加逗号
         json_text = re.sub(r'}\s*{', '},{', json_text)
@@ -659,6 +673,27 @@ class LLMAnalyzer:
         # 修复缺少逗号的问题
         # 在true/false后面跟"的情况添加逗号
         json_text = re.sub(r'(true|false)\s*"', r'\1,"', json_text)
+        
+        # 修复截断的JSON - 如果JSON不完整，尝试补全
+        if not json_text.strip().endswith('}'):
+            # 计算未闭合的大括号
+            open_braces = json_text.count('{')
+            close_braces = json_text.count('}')
+            missing_braces = open_braces - close_braces
+            
+            # 补全缺失的大括号
+            json_text += '}' * missing_braces
+        
+        # 修复截断的字符串值
+        json_text = re.sub(r'"([^"]*)$', r'"\1"', json_text)
+        
+        # 修复截断的数组
+        if json_text.count('[') > json_text.count(']'):
+            json_text += ']'
+        
+        # 修复截断的对象
+        if json_text.count('{') > json_text.count('}'):
+            json_text += '}'
         
         # 修复缺少逗号的问题
         # 在null后面跟"的情况添加逗号
@@ -760,12 +795,15 @@ class LLMAnalyzer:
     
     def _call_deepseek(self, prompt: str, analysis_type: str) -> Dict[str, Any]:
         """调用DeepSeek API，带重试机制和指数退避"""
-        max_retries = 5  # 增加重试次数
-        base_delay = 2  # 基础延迟2秒
-        max_delay = 30  # 最大延迟30秒
+        max_retries = 3  # 减少重试次数，避免过度调用
+        base_delay = 5   # 增加基础延迟
+        max_delay = 30   # 最大延迟30秒
         
         for attempt in range(max_retries):
             try:
+                # 添加API调用间隔，避免频率过高
+                if attempt > 0:
+                    time.sleep(2)
                 headers = {
                     "Authorization": f"Bearer {self.deepseek_api_key}",
                     "Content-Type": "application/json",
@@ -794,7 +832,7 @@ class LLMAnalyzer:
                     f"{self.deepseek_base_url}/chat/completions",
                     headers=headers,
                     json=data,
-                    timeout=(30, 180),  # (连接超时, 读取超时)
+                    timeout=(60, 300),  # (连接超时, 读取超时) - 增加到5分钟
                     verify=True
                 )
                 

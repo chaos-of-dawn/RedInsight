@@ -9,7 +9,7 @@ from datetime import datetime
 import logging
 import json
 import numpy as np
-from typing import List
+from typing import List, Tuple
 from config import Config
 
 Base = declarative_base()
@@ -117,6 +117,7 @@ class StructuredExtraction(Base):
     mentioned_tools = Column(JSON)  # 存储为JSON数组
     evidence_sentences = Column(JSON)  # 存储为JSON数组
     confidence_score = Column(Float)
+    long_tail_keywords = Column(JSON)  # 长尾关键词，存储为JSON数组
     
     # 元数据
     extraction_timestamp = Column(DateTime, default=datetime.utcnow)
@@ -187,6 +188,23 @@ class BusinessInsight(Base):
     # 元数据
     analysis_timestamp = Column(DateTime, default=datetime.utcnow)
     model_name = Column(String)
+    
+    # 添加唯一约束
+    __table_args__ = (
+        {'extend_existing': True}
+    )
+
+class KeywordStatistic(Base):
+    """关键词统计表（全局去重）"""
+    __tablename__ = 'keyword_statistics'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    keyword = Column(String, nullable=False)  # 关键词
+    category = Column(String)  # 类别: all, main_topic, pain_point, user_need
+    frequency = Column(Integer, default=1)  # 出现频率
+    tfidf_score = Column(Float, default=0.0)  # TF-IDF得分
+    first_seen = Column(DateTime, default=datetime.utcnow)  # 首次出现时间
+    last_seen = Column(DateTime, default=datetime.utcnow)  # 最后出现时间
     
     # 添加唯一约束
     __table_args__ = (
@@ -1111,6 +1129,108 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"获取帖子数据失败: {str(e)}")
             return []
+        finally:
+            session.close()
+    
+    def upsert_keyword_statistics(self, keywords: List[Tuple[str, float]], category: str = "all"):
+        """
+        更新或插入关键词统计（去重）
+        
+        Args:
+            keywords: [(keyword, score), ...] 关键词和得分列表
+            category: 关键词类别
+        """
+        session = self.get_session()
+        try:
+            for keyword, score in keywords:
+                # 查询是否已存在
+                existing = session.query(KeywordStatistic).filter(
+                    KeywordStatistic.keyword == keyword,
+                    KeywordStatistic.category == category
+                ).first()
+                
+                if existing:
+                    # 更新频率和得分
+                    existing.frequency += 1
+                    existing.tfidf_score = max(existing.tfidf_score, score)
+                    existing.last_seen = datetime.utcnow()
+                else:
+                    # 创建新记录
+                    new_stat = KeywordStatistic(
+                        keyword=keyword,
+                        category=category,
+                        frequency=1,
+                        tfidf_score=score,
+                        first_seen=datetime.utcnow(),
+                        last_seen=datetime.utcnow()
+                    )
+                    session.add(new_stat)
+            
+            session.commit()
+            self.logger.info(f"成功更新关键词统计: {category} - {len(keywords)}个关键词")
+            return True
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"更新关键词统计失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_top_keywords(self, category: str = "all", limit: int = 50, order_by: str = "frequency"):
+        """
+        获取高频关键词
+        
+        Args:
+            category: 类别筛选
+            limit: 返回数量
+            order_by: 排序方式 (frequency 或 tfidf_score)
+        """
+        session = self.get_session()
+        try:
+            query = session.query(KeywordStatistic)
+            
+            if category:
+                query = query.filter(KeywordStatistic.category == category)
+            
+            if order_by == "frequency":
+                query = query.order_by(KeywordStatistic.frequency.desc())
+            else:
+                query = query.order_by(KeywordStatistic.tfidf_score.desc())
+            
+            stats = query.limit(limit).all()
+            
+            result = []
+            for stat in stats:
+                result.append({
+                    'keyword': stat.keyword,
+                    'category': stat.category,
+                    'frequency': stat.frequency,
+                    'tfidf_score': stat.tfidf_score,
+                    'first_seen': stat.first_seen,
+                    'last_seen': stat.last_seen
+                })
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"获取高频关键词失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def clear_keyword_statistics(self):
+        """清空关键词统计"""
+        session = self.get_session()
+        try:
+            session.query(KeywordStatistic).delete()
+            session.commit()
+            self.logger.info("关键词统计已清空")
+            return True
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"清空关键词统计失败: {str(e)}")
+            return False
         finally:
             session.close()
 

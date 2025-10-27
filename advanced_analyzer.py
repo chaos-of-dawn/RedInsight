@@ -1,5 +1,5 @@
 """
-高级分析器
+深度分析器
 整合结构化抽取、向量化、聚类和洞察生成功能
 """
 
@@ -12,13 +12,14 @@ from structured_extractor import StructuredExtractor, StructuredExtraction
 from vectorizer import TextVectorizer, VectorizedText
 from clustering import TextClustering, ClusteringAnalysis
 from insights_generator import InsightsGenerator, BusinessInsight
+from keyword_extractor import KeywordExtractor
 from database import DatabaseManager
 from llm_analyzer import LLMAnalyzer
 
 logger = logging.getLogger(__name__)
 
 class AdvancedAnalyzer:
-    """高级分析器 - 整合所有分析功能"""
+    """深度分析器 - 整合所有分析功能"""
     
     def __init__(self, db_manager: DatabaseManager, llm_analyzer: LLMAnalyzer, provider: str = "openai"):
         self.db_manager = db_manager
@@ -30,12 +31,13 @@ class AdvancedAnalyzer:
         self.vectorizer = TextVectorizer()
         self.clustering = TextClustering()
         self.insights_generator = InsightsGenerator(llm_analyzer, provider)
+        self.keyword_extractor = KeywordExtractor(max_keywords=50, min_word_length=3)
     
     def run_full_analysis(self, subreddits: List[str] = None, limit: int = None) -> Dict[str, Any]:
         """运行完整的分析流程"""
         try:
             analysis_id = str(uuid.uuid4())
-            logger.info(f"开始高级分析流程，分析ID: {analysis_id}")
+            logger.info(f"开始深度分析流程，分析ID: {analysis_id}")
             
             # 1. 获取帖子数据
             posts = self.db_manager.get_posts(limit=limit, subreddits=subreddits)
@@ -76,11 +78,15 @@ class AdvancedAnalyzer:
             
             logger.info("业务洞察生成完成")
             
-            # 6. 保存结果到数据库
+            # 6. 关键词提取和统计（去重）
+            logger.info("开始提取高频关键词...")
+            keyword_stats = self._run_keyword_extraction(extractions)
+            
+            # 7. 保存结果到数据库
             self._save_analysis_results(analysis_id, extractions, vectorized_texts, 
                                       clustering_analysis, business_insight)
             
-            # 7. 导出结果
+            # 8. 导出结果
             export_path = self._export_results(analysis_id, business_insight)
             
             return {
@@ -100,7 +106,7 @@ class AdvancedAnalyzer:
             }
             
         except Exception as e:
-            logger.error(f"高级分析流程失败: {str(e)}")
+            logger.error(f"深度分析流程失败: {str(e)}")
             return {"error": f"分析流程失败: {str(e)}"}
     
     def _run_structured_extraction(self, posts: List[Any], provider: str) -> List[StructuredExtraction]:
@@ -220,8 +226,12 @@ class AdvancedAnalyzer:
     def _export_results(self, analysis_id: str, business_insight: BusinessInsight) -> str:
         """导出分析结果"""
         try:
+            import os
             # 生成导出文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # 确保output目录存在
+            os.makedirs('./output', exist_ok=True)
             
             # 导出JSON格式
             json_filename = f"business_insights_{analysis_id}_{timestamp}.json"
@@ -233,22 +243,97 @@ class AdvancedAnalyzer:
             text_file_path = f"./output/{text_filename}"
             text_success = self.insights_generator.export_insights_to_text(business_insight, text_file_path)
             
-            if json_success and text_success:
-                logger.info(f"洞察报告已导出到: {json_file_path} 和 {text_file_path}")
-                return f"{json_file_path}, {text_file_path}"
-            elif json_success:
-                logger.info(f"JSON洞察报告已导出到: {json_file_path}")
-                return json_file_path
-            elif text_success:
-                logger.info(f"可读洞察报告已导出到: {text_file_path}")
-                return text_file_path
+            # 导出关键词统计报告
+            keywords_filename = f"keywords_statistics_{analysis_id}_{timestamp}.txt"
+            keywords_file_path = f"./output/{keywords_filename}"
+            keywords_success = self._export_keywords_report(keywords_file_path, analysis_id)
+            
+            export_files = []
+            if json_success:
+                export_files.append(json_file_path)
+            if text_success:
+                export_files.append(text_file_path)
+            if keywords_success:
+                export_files.append(keywords_file_path)
+            
+            if export_files:
+                logger.info(f"分析报告已导出到: {', '.join(export_files)}")
+                return ", ".join(export_files)
             else:
-                logger.warning("洞察报告导出失败")
+                logger.warning("分析报告导出失败")
                 return ""
                 
         except Exception as e:
             logger.error(f"导出结果失败: {str(e)}")
             return ""
+    
+    def _export_keywords_report(self, file_path: str, analysis_id: str) -> bool:
+        """导出关键词统计报告"""
+        try:
+            from datetime import datetime
+            import os
+            
+            # 确保目录存在
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            # 获取所有关键词统计
+            all_keywords = self.db_manager.get_top_keywords(category="all", limit=50, order_by="frequency")
+            main_topics = self.db_manager.get_top_keywords(category="main_topic", limit=20, order_by="frequency")
+            pain_points = self.db_manager.get_top_keywords(category="pain_point", limit=20, order_by="frequency")
+            user_needs = self.db_manager.get_top_keywords(category="user_need", limit=20, order_by="frequency")
+            long_tail = self.db_manager.get_top_keywords(category="long_tail", limit=30, order_by="frequency")
+            
+            # 创建报告内容
+            content = "关键词统计报告\n"
+            content += f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            content += f"分析ID: {analysis_id}\n\n"
+            
+            content += "="*50 + "\n"
+            content += "前50个高频关键词\n"
+            content += "="*50 + "\n\n"
+            
+            for i, kw in enumerate(all_keywords, 1):
+                content += f"{i:2d}. {kw['keyword']:30s} 频率: {kw['frequency']:5d}  TF-IDF: {kw['tfidf_score']:.4f}\n"
+            
+            content += "\n" + "="*50 + "\n"
+            content += "主要主题\n"
+            content += "="*50 + "\n\n"
+            
+            for i, kw in enumerate(main_topics, 1):
+                content += f"  {i:2d}. {kw['keyword']} (频率: {kw['frequency']})\n"
+            
+            content += "\n" + "="*50 + "\n"
+            content += "痛点统计\n"
+            content += "="*50 + "\n\n"
+            
+            for i, kw in enumerate(pain_points, 1):
+                content += f"  {i:2d}. {kw['keyword']} (频率: {kw['frequency']})\n"
+            
+            content += "\n" + "="*50 + "\n"
+            content += "用户需求统计\n"
+            content += "="*50 + "\n\n"
+            
+            for i, kw in enumerate(user_needs, 1):
+                content += f"  {i:2d}. {kw['keyword']} (频率: {kw['frequency']})\n"
+            
+            if long_tail:
+                content += "\n" + "="*50 + "\n"
+                content += "长尾关键词（大模型提取）\n"
+                content += "="*50 + "\n\n"
+                
+                for i, kw in enumerate(long_tail, 1):
+                    content += f"  {i:2d}. {kw['keyword']} (频率: {kw['frequency']})\n"
+            
+            # 写入文件
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            logger.info(f"关键词统计报告已导出: {file_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"导出关键词统计报告失败: {str(e)}")
+            return False
     
     def get_analysis_summary(self) -> Dict[str, Any]:
         """获取分析摘要"""
@@ -273,6 +358,50 @@ class AdvancedAnalyzer:
         except Exception as e:
             logger.error(f"获取分析摘要失败: {str(e)}")
             return {"error": f"获取分析摘要失败: {str(e)}"}
+    
+    def _run_keyword_extraction(self, extractions: List[StructuredExtraction]) -> Dict[str, Any]:
+        """运行关键词提取（去重）"""
+        try:
+            # 从抽取结果中提取关键词
+            keyword_stats = self.keyword_extractor.extract_from_extractions(extractions)
+            
+            # 保存到数据库（自动去重）
+            if keyword_stats.get('all'):
+                self.db_manager.upsert_keyword_statistics(
+                    keyword_stats['all'], 
+                    category="all"
+                )
+            
+            if keyword_stats.get('main_topics'):
+                self.db_manager.upsert_keyword_statistics(
+                    [(topic, count) for topic, count in keyword_stats['main_topics']],
+                    category="main_topic"
+                )
+            
+            if keyword_stats.get('pain_points'):
+                self.db_manager.upsert_keyword_statistics(
+                    [(point, count) for point, count in keyword_stats['pain_points']],
+                    category="pain_point"
+                )
+            
+            if keyword_stats.get('user_needs'):
+                self.db_manager.upsert_keyword_statistics(
+                    [(need, count) for need, count in keyword_stats['user_needs']],
+                    category="user_need"
+                )
+            
+            if keyword_stats.get('long_tail_keywords'):
+                self.db_manager.upsert_keyword_statistics(
+                    [(keyword, count) for keyword, count in keyword_stats['long_tail_keywords']],
+                    category="long_tail"
+                )
+            
+            logger.info("关键词提取和统计完成")
+            return keyword_stats
+            
+        except Exception as e:
+            logger.error(f"关键词提取失败: {str(e)}")
+            return {}
     
     def run_quick_analysis(self, subreddits: List[str] = None, limit: int = 50) -> Dict[str, Any]:
         """运行快速分析（使用较少数据）"""

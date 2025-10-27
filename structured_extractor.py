@@ -33,6 +33,7 @@ class StructuredExtraction:
     mentioned_tools: List[str]
     evidence_sentences: List[str]
     confidence_score: float
+    long_tail_keywords: List[str]  # 长尾关键词
     
     # 元数据
     extraction_timestamp: datetime
@@ -91,11 +92,16 @@ class StructuredExtractor:
                     "minimum": 0,
                     "maximum": 1,
                     "description": "抽取结果的可信度，0到1"
+                },
+                "long_tail_keywords": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "长尾关键词，如'iPhone battery replacement'、'home renovation cost'等多词短语，最多10个"
                 }
             },
             "required": ["main_topic", "pain_points", "user_needs", "sentiment", 
                         "sentiment_score", "key_phrases", "mentioned_tools", 
-                        "evidence_sentences", "confidence_score"]
+                        "evidence_sentences", "confidence_score", "long_tail_keywords"]
         }
     
     def extract_from_post(self, post_data: Dict[str, Any], provider: str = "openai") -> Optional[StructuredExtraction]:
@@ -172,6 +178,7 @@ class StructuredExtractor:
                 mentioned_tools=extracted_data.get('mentioned_tools', []),
                 evidence_sentences=extracted_data.get('evidence_sentences', []),
                 confidence_score=extracted_data.get('confidence_score', 0.0),
+                long_tail_keywords=extracted_data.get('long_tail_keywords', []),
                 
                 extraction_timestamp=datetime.now(),
                 extraction_model=provider
@@ -221,14 +228,16 @@ class StructuredExtractor:
   "key_phrases": ["关键词1", "关键词2"],
   "mentioned_tools": ["工具1", "工具2"],
   "evidence_sentences": ["证据1", "证据2"],
-  "confidence_score": 0.8
+  "confidence_score": 0.8,
+  "long_tail_keywords": ["多词短语1", "多词短语2"]
 }}
 
 要求：
 - 只输出JSON，不要其他文字
 - 使用双引号
 - 不要markdown标记
-- 确保JSON格式正确"""
+- 确保JSON格式正确
+- long_tail_keywords是2-5个词的关键词短语，例如"iPhone battery replacement"、"home renovation cost"等"""
     
     def _parse_extraction_result(self, content: str) -> Optional[Dict[str, Any]]:
         """解析抽取结果"""
