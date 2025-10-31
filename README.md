@@ -1,223 +1,168 @@
-# RedInsight - Reddit数据分析工具
+# 🔍 RedInsight - Reddit智能分析平台
 
-RedInsight是一个用于抓取Reddit数据、存储到本地数据库，并使用大模型API进行深度数据分析的Python工具。
+> 集数据抓取、智能分析、内容生成、养号管理于一体的Reddit数据分析与养号平台
 
-> 🎉 **最新更新 [2025-01-27]**：新增长尾关键词提取功能，采用TF-IDF和大模型混合提取策略，可自动提取高频词和长尾关键词短语，如"iPhone battery replacement"、"home renovation cost"等。
+![GitHub stars](https://img.shields.io/github/stars/chaos-of-dawn/RedInsight?style=social)
+![GitHub forks](https://img.shields.io/github/forks/chaos-of-dawn/RedInsight?style=social)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-## ✨ 核心功能
+**RedInsight** 是一个基于大模型AI技术的Reddit数据分析平台，帮助用户从Reddit数据中挖掘商业价值，生成高质量内容，并智能管理Reddit账号。通过AI技术实现从需求分析到内容发布到互动反馈的完整闭环。
 
-- 🔍 **Reddit数据抓取**: 使用PRAW抓取帖子、评论和子版块信息
-- 💾 **本地数据存储**: 使用SQLAlchemy和SQLite存储结构化数据
-- 🤖 **大模型分析**: 集成OpenAI、Anthropic和DeepSeek API进行内容分析
-- 🔤 **长尾关键词提取**: **NEW** 智能提取多词短语关键词，理解用户真实意图
-- 📊 **深度分析**: 六阶段分析流程（结构化抽取、向量化、聚类、洞察生成、关键词提取、报告导出）
-- 📈 **关键词统计**: **NEW** 自动导出高频词和长尾词统计报告到output文件夹
-- 🎯 **混合提取策略**: **NEW** TF-IDF提取高频词 + 大模型提取长尾关键词
-- ⚙️ **灵活配置**: 支持多种配置选项和自定义参数
+## ✨ 核心特性
 
-## 安装说明
+### 🎯 智能子版块推荐
+- **需求分析**：支持中文输入，AI自动翻译并分析用户意图
+- **三层漏斗式筛选**：高度匹配(85-100分) → 中度匹配(70-84分) → 低度匹配(60-69分)
+- **精准推荐**：基于向量相似度匹配，精准定位目标子版块
+- **批量索引**：一键索引多个推荐子版块，快速建立数据基础
 
-### 1. 克隆项目
-```bash
-git clone https://github.com/chaos-of-dawn/RedInsight.git
-cd RedInsight
-```
+### 🔧 Reddit养号控制台
+- **账号状态监控**：实时显示账号Karma、账号年龄、今日任务等关键指标
+- **发帖资格检测**：智能评估账号在目标子版块的发帖资格，生成个性化养号建议
+- **7天养号计划**：自动生成科学的养号计划，包括点赞、评论、发帖任务
+- **互动历史统计**：记录所有互动操作，统计成功率和互动趋势
 
-### 2. 安装依赖
+### 📝 AI智能发帖系统
+- **五步骤智能流程**：
+  1. **子版块选择** - 从推荐/手动/已索引/数据库中选择
+  2. **详情查看** - 查看订阅数、描述、关键词、热门帖子
+  3. **规则提示** - 自动获取并翻译子版块规则为中文
+  4. **内容生成** - AI基于深度分析结果、关键词、长尾词和规则生成内容
+  5. **预览发布** - 预览、验证、保存草稿或直接发布
+  
+- **AI内容生成**：基于深度分析结果、长尾关键词和子版块规则生成高质量帖子
+- **规则智能适配**：自动获取并翻译子版块规则，确保内容合规
+- **多语言支持**：中文输入自动翻译为英文，支持本地化内容
+- **重新生成功能**：支持不满意内容一键重新生成
+
+### 🔬 深度数据分析
+- **六阶段分析流程**：结构化抽取 → 向量化 → 聚类 → 洞察生成 → 关键词提取 → 报告导出
+- **长尾关键词提取**：TF-IDF + 大模型混合策略，提取精准短语（如"iPhone battery replacement"）
+- **业务洞察生成**：从海量数据中提取主导主题、主要痛点、关键机会
+- **自动报告生成**：导出包含高频词、长尾词、主题分析的完整JSON/TXT报告
+
+### 📚 快速互动管理
+- **帖子互动**：快速点赞、点踩、保存、回复、查看评论
+- **子版块浏览与翻译**：浏览热门帖子，一键翻译为中文，查看评论并进行互动
+- **评论管理**：查看帖子评论，点赞/点踩评论，快速回复
+- **热帖追踪**：实时追踪热门帖子，获取最新社区动态
+
+### 🔍 数据抓取与存储
+- **灵活抓取**：支持按时间、分数、关键词等多维度筛选
+- **本地存储**：使用SQLAlchemy和SQLite存储结构化数据
+- **数据管理**：完整的本地数据管理和查询功能
+
+## 🛠️ 技术栈
+
+- **前端框架**：Streamlit (Web界面)
+- **后端语言**：Python 3.8+
+- **数据抓取**：PRAW (Reddit API)
+- **AI模型**：OpenAI GPT、Anthropic Claude、DeepSeek
+- **向量化**：sentence-transformers
+- **数据库**：SQLAlchemy + SQLite
+- **关键词提取**：TF-IDF + 大模型混合策略
+
+## 📊 功能模块
+
+| 模块 | 功能 |
+|------|------|
+| 🎯 **子版块推荐** | 智能需求分析、三层漏斗式筛选、精准推荐、批量索引 |
+| 🔧 **养号控制台** | 账号状态监控、发帖资格检测、养号计划、互动管理 |
+| 📝 **智能发帖** | 5步智能流程、AI内容生成、规则适配、多语言支持 |
+| 🔬 **深度分析** | 六阶段分析、长尾关键词提取、业务洞察、自动报告 |
+| 📚 **互动管理** | 帖子互动、浏览翻译、评论管理、热帖追踪 |
+| 🔍 **数据抓取** | 多维度筛选、批量抓取、本地存储、数据管理 |
+
+## 🎯 适用场景
+
+- **Reddit养号**：新账号养号、账号状态监控、养号计划生成
+- **Reddit数据分析**：子版块分析、用户需求挖掘、趋势洞察
+- **AI大模型发帖**：基于数据分析生成高质量内容，自动适配子版块规则
+- **Reddit热帖追踪**：实时追踪热门帖子，获取最新社区动态
+
+## 🚀 快速开始
+
+### 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 配置环境变量
-复制 `env_example.txt` 为 `.env` 并填写您的API密钥：
+### 配置API密钥
+在 `api_keys.json` 中配置以下API密钥：
+- Reddit API密钥（必需）
+- OpenAI/Anthropic/DeepSeek API密钥（至少一个）
 
+### 启动应用
 ```bash
-cp env_example.txt .env
-```
-
-编辑 `.env` 文件，填入以下信息：
-- Reddit API密钥（从 https://www.reddit.com/prefs/apps 获取）
-- OpenAI API密钥
-- Anthropic API密钥（可选）
-- DeepSeek API密钥（可选）
-
-**重要提示**：Reddit现在使用OAuth2认证，不再支持用户名/密码认证。
-
-## 使用方法
-
-### 🚀 快速启动
-
-#### 使用启动器（推荐）
-```bash
+# 方式一：使用启动器（推荐）
 python launcher.py
-```
-启动器提供了三种界面选择：
-- 🖥️ **桌面GUI界面** (Tkinter) - 传统桌面应用
-- 🌐 **Web界面** (Streamlit) - 现代化Web应用
-- 💻 **命令行界面** - 纯命令行操作
 
-### 界面使用说明
-
-#### 1. Web界面（推荐） 🌐
-```bash
+# 方式二：直接启动Web界面
 streamlit run streamlit_app.py
 ```
-- 现代化Web界面，支持所有功能
-- **深度分析**：六阶段智能分析流程
-- **长尾关键词提取**：自动提取高频词和长尾关键词
-- **关键词统计报告**：自动导出到output文件夹
-- 响应式设计，实时数据更新
-- 美观的图表展示
 
-#### 2. 桌面GUI界面
-```bash
-python ui_app.py
-```
-- 多标签页界面设计
-- OAuth2认证流程
-- API密钥安全存储
-- 实时进度显示
-- 完整的日志记录
+## 📖 使用流程
 
-#### 3. 命令行界面
+### 完整工作流程
 
-##### 完整工作流程
-```bash
-python main.py --action full --subreddits MachineLearning programming
-```
+1. **需求分析** → 输入中文需求，AI分析并推荐目标子版块
+2. **批量索引** → 选择推荐子版块进行批量数据抓取
+3. **深度分析** → 运行六阶段深度分析，提取关键词和业务洞察
+4. **账号检测** → 检测账号发帖资格，生成养号计划（如需要）
+5. **智能发帖** → 基于分析结果生成高质量帖子内容
+6. **互动管理** → 进行帖子互动，追踪热帖，管理账号
 
-##### 仅抓取数据
-```bash
-python main.py --action scrape --subreddits MachineLearning --limit 50
-```
+### 核心功能演示
 
-##### 仅分析现有数据
-```bash
-python main.py --action analyze --provider openai
-```
+#### 🔧 Reddit养号控制台
+- 查看账号状态（Karma、账号年龄）
+- 检测目标子版块发帖资格
+- 生成7天养号计划
+- 跟踪养号进度和互动历史
 
-##### 生成社区报告
-```bash
-python main.py --action report --subreddits MachineLearning
-```
+#### 📝 智能发帖流程
+1. 选择子版块 → 2. 查看详情 → 3. 规则提示（自动翻译） → 4. 生成内容 → 5. 预览发布
 
-### 高级用法
+#### 🎯 子版块推荐
+- 中文需求输入 → AI翻译分析 → 三层漏斗筛选 → 精准推荐 → 批量索引
 
-#### 搜索特定内容
-```bash
-python main.py --action scrape --subreddits MachineLearning --search "machine learning" "deep learning"
-```
+## 📸 功能截图
 
-#### 使用不同的AI提供商
-```bash
-python main.py --action analyze --provider anthropic
-python main.py --action analyze --provider deepseek
-```
+> 注：本项目提供Web界面（Streamlit），界面友好，操作便捷。
 
-#### 不抓取评论（加快速度）
-```bash
-python main.py --action scrape --subreddits MachineLearning --no-comments
-```
-
-## 项目结构
-
-```
-RedInsight/
-├── launcher.py          # 启动器（推荐使用）
-├── main.py              # 命令行主程序入口
-├── ui_app.py            # 桌面GUI应用程序
-├── streamlit_app.py     # Web界面应用程序
-├── reddit_scraper.py    # Reddit数据抓取模块
-├── database.py          # 数据库管理模块
-├── llm_analyzer.py      # 大模型分析模块
-├── config.py            # 配置文件
-├── requirements.txt     # 依赖包列表
-├── env_example.txt      # 环境变量示例
-└── README.md           # 项目说明
-```
-
-## 数据库结构
-
-### RedditPost 表
-- 存储Reddit帖子信息
-- 包含标题、内容、作者、得分等字段
-
-### RedditComment 表
-- 存储Reddit评论信息
-- 关联到对应的帖子
-
-### AnalysisResult 表
-- 存储大模型分析结果
-- 支持多种分析类型（情感、主题、质量等）
-
-### SubredditInfo 表
-- 存储子版块基本信息
-
-## 分析功能
-
-### 1. 情感分析
-- 分析文本的情感倾向（正面/负面/中性）
-- 识别具体情绪类型
-- 提取关键短语
-
-### 2. 主题分析
-- 识别主要话题和关键词
-- 内容分类
-- 相关性评分
-
-### 3. 质量评估
-- 评估内容深度和逻辑性
-- 提供改进建议
-- 价值评估
-
-### 4. 社区分析
-- 整体趋势分析
-- 参与度评估
-- 社区健康度指标
-
-## 配置选项
-
-在 `config.py` 中可以调整以下参数：
-
-- `DEFAULT_SUBREDDITS`: 默认分析的子版块
-- `MAX_POSTS_PER_SUBREDDIT`: 每个子版块最大帖子数
-- `MAX_COMMENTS_PER_POST`: 每个帖子最大评论数
-- `ANALYSIS_MODEL`: 使用的AI模型
-- `BATCH_SIZE`: 批处理大小
-
-## 注意事项
-
-1. **API限制**: Reddit API和AI API都有调用限制，程序已内置延迟机制
-2. **数据隐私**: 请遵守Reddit的使用条款和数据处理规范
-3. **API密钥安全**: 不要将包含真实API密钥的 `.env` 文件提交到版本控制
-4. **存储空间**: 大量数据会占用本地存储空间，请定期清理
-
-## 故障排除
-
-### 常见问题
-
-1. **Reddit API认证失败**
-   - 检查Reddit API密钥是否正确
-   - 确认用户代理字符串格式正确
-
-2. **AI API调用失败**
-   - 验证API密钥是否有效
-   - 检查网络连接
-   - 确认API配额是否充足
-
-3. **数据库错误**
-   - 检查数据库文件权限
-   - 确认SQLite版本兼容性
-
-## 贡献指南
+## 🤝 贡献
 
 欢迎提交Issue和Pull Request来改进这个项目！
 
-## 许可证
+### 贡献方向
+- 功能增强
+- Bug修复
+- 文档完善
+- 性能优化
+
+## 📝 许可证
 
 MIT License
 
-## 联系方式
+## 📮 联系方式
 
-如有问题或建议，请通过Issue联系。
+**微信**：`whj7087824`  
+**加好友时请注明**：`github`
 
+如有问题或建议，欢迎通过微信联系！
+
+---
+
+## 🏷️ 标签
+
+`reddit养号` `reddit数据分析` `AI大模型发帖` `reddit热帖追踪` `Reddit API` `Python` `Streamlit` `AI` `机器学习` `数据分析` `自然语言处理`
+
+---
+
+<div align="center">
+
+**⭐ 如果这个项目对您有帮助，请给个Star支持一下！⭐**
+
+Made with ❤️ by RedInsight Team
+
+</div>
