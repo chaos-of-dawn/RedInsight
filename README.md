@@ -6,6 +6,27 @@
 ![GitHub forks](https://img.shields.io/github/forks/chaos-of-dawn/RedInsight?style=social)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
+---
+
+## ⚠️ 重要提示
+
+> **📦 完整版下载**  
+> **GitHub上的项目代码为非完整版，完整版请从夸克网盘下载：**  
+> 
+> **🔗 夸克网盘下载链接：** [https://pan.quark.cn/s/4d9c8f0fde2c](https://pan.quark.cn/s/4d9c8f0fde2c)
+> 
+> **使用说明：**
+> - 下载后解压文件
+> - 双击运行 `一键启动.bat` 即可使用
+> - 项目需要激活码才能使用
+> 
+> **🔑 获取激活码：**  
+> 请联系项目管理员获取激活码  
+> **管理员微信号：`whj7087824`**  
+> 加好友时请注明：`RedInsight激活`
+
+---
+
 **RedInsight** 是一个基于大模型AI技术的Reddit数据分析平台，帮助用户从Reddit数据中挖掘商业价值，生成高质量内容，并智能管理Reddit账号。通过AI技术实现从需求分析到内容发布到互动反馈的完整闭环。
 
 ## ✨ 核心特性
@@ -82,24 +103,21 @@
 
 ## 🚀 快速开始
 
-### 安装依赖
-```bash
-pip install -r requirements.txt
-```
+### 使用步骤
 
-### 配置API密钥
-在 `api_keys.json` 中配置以下API密钥：
-- Reddit API密钥（必需）
-- OpenAI/Anthropic/DeepSeek API密钥（至少一个）
+1. **下载完整版**  
+   从夸克网盘下载完整版项目压缩包：[下载链接](https://pan.quark.cn/s/4d9c8f0fde2c)
 
-### 启动应用
-```bash
-# 方式一：使用启动器（推荐）
-python launcher.py
+2. **解压文件**  
+   将下载的压缩包解压到本地目录
 
-# 方式二：直接启动Web界面
-streamlit run streamlit_app.py
-```
+3. **启动应用**  
+   双击运行 `一键启动.bat` 文件即可启动应用
+
+4. **激活项目**  
+   - 首次运行需要激活
+   - 按照提示输入邮箱并获取激活码
+   - 联系项目管理员获取激活码：**微信号 `whj7087824`**
 
 ## 📖 使用流程
 
