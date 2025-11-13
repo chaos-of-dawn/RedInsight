@@ -10,20 +10,82 @@
 
 ## ⚠️ 重要提示
 
-> **📦 完整版下载**  
-> **GitHub上的项目代码为非完整版，完整版请从夸克网盘下载：**  
-> 
-> **🔗 夸克网盘下载链接：** [https://pan.quark.cn/s/4d9c8f0fde2c](https://pan.quark.cn/s/4d9c8f0fde2c)
-> 
-> **使用说明：**
-> - 下载后解压文件
-> - 双击运行 `一键启动.bat` 即可使用
-> - 项目需要激活码才能使用
-> 
-> **🔑 获取激活码：**  
-> 请联系项目管理员获取激活码  
-> **管理员微信号：`whj7087824`**  
-> 加好友时请注明：`RedInsight激活`
+### 📦 版本说明
+
+**GitHub上的代码为基础版本**，包含以下核心功能：
+- ✅ 数据抓取：Reddit数据抓取与存储
+- ✅ 深度分析：六阶段深度数据分析、关键词提取、业务洞察生成
+- ✅ 数据管理：本地数据库管理与查询
+
+**本地部署方法：**
+
+1. **环境要求**
+   - Python 3.8 或更高版本
+   - Windows/Linux/macOS 系统
+
+2. **安装步骤**
+   ```bash
+   # 1. 克隆项目
+   git clone https://github.com/chaos-of-dawn/RedInsight.git
+   cd RedInsight
+   
+   # 2. 创建虚拟环境
+   python -m venv venv
+   
+   # 3. 激活虚拟环境
+   # Windows:
+   venv\Scripts\activate
+   # Linux/macOS:
+   source venv/bin/activate
+   
+   # 4. 安装PyTorch（CPU版本）
+   pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+   pip install torchvision==0.16.0+cpu --index-url https://download.pytorch.org/whl/cpu
+   
+   # 5. 安装sentence-transformers依赖（按顺序）
+   pip install tokenizers==0.13.2
+   pip install huggingface-hub==0.11.1
+   pip install transformers==4.21.0
+   pip install sentence-transformers==2.2.2
+   
+   # 6. 安装其他依赖
+   pip install -r requirements.txt
+   ```
+
+3. **配置API密钥**
+   - 创建 `api_keys.json` 文件
+   - 配置Reddit API密钥（client_id, client_secret等）
+   - 配置大模型API密钥（OpenAI、Anthropic、DeepSeek等）
+   ```json
+   {
+     "reddit_client_id": "your_reddit_client_id",
+     "reddit_client_secret": "your_reddit_client_secret",
+     "openai_api_key": "your_openai_api_key",
+     "anthropic_api_key": "your_anthropic_api_key",
+     "deepseek_api_key": "your_deepseek_api_key"
+   }
+   ```
+
+4. **启动应用**
+   ```bash
+   streamlit run streamlit_app.py
+   ```
+
+### 🚀 进阶版下载
+
+**若需要完整功能（包括智能发帖、养号控制台、子版块推荐等进阶功能），请从夸克网盘下载进阶版：**
+
+**🔗 夸克网盘下载链接：** [https://pan.quark.cn/s/4d9c8f0fde2c](https://pan.quark.cn/s/4d9c8f0fde2c)
+
+**使用说明：**
+- 下载后解压文件
+- 双击运行 `一键启动.bat` 即可使用
+- 项目需要激活码才能使用
+
+**🔑 获取激活码：**  
+请联系项目管理员获取激活码  
+**管理员微信号：`whj7087824`**  
+加好友时请注明：`RedInsight激活`
 
 ---
 
