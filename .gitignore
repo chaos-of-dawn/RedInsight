@@ -27,6 +27,11 @@ env/
 ENV/
 env.bak/
 venv.bak/
+# 子目录中的虚拟环境
+client/venv/
+SoloKey/venv/
+**/venv/
+**/env/
 
 # Environment Variables
 .env
@@ -39,6 +44,7 @@ venv.bak/
 api_keys.json
 secrets.json
 config.json
+activation.json
 
 # Database
 *.db

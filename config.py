@@ -15,7 +15,12 @@ def load_api_keys():
             keys = json.load(f)
         return keys
     except FileNotFoundError:
-        print("警告: api_keys.json 文件未找到，使用环境变量")
+        # 自动创建空的 api_keys.json 文件
+        try:
+            with open('api_keys.json', 'w', encoding='utf-8') as f:
+                json.dump({}, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass  # 如果创建失败，静默忽略
         return {}
     except Exception as e:
         print(f"警告: 加载 api_keys.json 失败: {e}，使用环境变量")

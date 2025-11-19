@@ -11,6 +11,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import json
 import time
+import re
 import requests
 from config import Config
 
@@ -54,7 +55,8 @@ class LLMAnalyzer:
         
         # DeepSeek API配置
         self.deepseek_api_key = deepseek_key
-        self.deepseek_base_url = "https://api.deepseek.com/v1"
+        # DeepSeek API端点 - 使用正确的URL格式
+        self.deepseek_base_url = "https://api.deepseek.com"
         
         # 调试信息
         self.logger.info(f"LLMAnalyzer初始化完成:")
@@ -363,13 +365,20 @@ class LLMAnalyzer:
         Args:
             text: 要分析的文本
             provider: API提供商
-            custom_prompt: 自定义综合提示词模板
+            custom_prompt: 自定义综合提示词模板（可以是包含{text}占位符的模板，也可以是完整的提示词）
             
         Returns:
             综合分析结果
         """
         if custom_prompt:
-            prompt = custom_prompt.format(text=text)
+            # 检查custom_prompt是否包含{text}占位符
+            # 如果包含，说明是模板，需要格式化
+            # 如果不包含，说明已经是完整的提示词，直接使用
+            if "{text}" in custom_prompt:
+                prompt = custom_prompt.format(text=text)
+            else:
+                # 已经是完整的提示词（可能已经在其他地方包含了数据），直接使用
+                prompt = custom_prompt
         else:
             prompt = f"""
             你是一位专业的社交媒体数据分析师。你的任务是深度分析Reddit社区中关于指定主题的讨论。
@@ -581,14 +590,42 @@ class LLMAnalyzer:
             # 尝试提取JSON部分
             if "```json" in response_text:
                 json_start = response_text.find("```json") + 7
+                # 查找下一个```，但需要确保不是开始标记
                 json_end = response_text.find("```", json_start)
+                if json_end == -1:
+                    # 如果没有找到结束标记，尝试找到最后一个}
+                    json_end = response_text.rfind("}")
+                    if json_end > json_start:
+                        json_end += 1
+                    else:
+                        json_end = len(response_text)
                 json_text = response_text[json_start:json_end].strip()
+                # 如果提取的文本仍然包含```，移除它们
+                json_text = json_text.replace("```", "").strip()
+            elif "```" in response_text and "{" in response_text:
+                # 可能有代码块但没有json标记
+                json_start = response_text.find("{")
+                if json_start > 0:
+                    json_end = response_text.rfind("}") + 1
+                    if json_end > json_start:
+                        json_text = response_text[json_start:json_end]
+                    else:
+                        json_text = response_text[json_start:]
+                else:
+                    json_text = response_text
             elif "{" in response_text and "}" in response_text:
                 json_start = response_text.find("{")
                 json_end = response_text.rfind("}") + 1
-                json_text = response_text[json_start:json_end]
+                if json_end > json_start:
+                    json_text = response_text[json_start:json_end]
+                else:
+                    # 如果找不到闭合的}，尝试修复
+                    json_text = response_text[json_start:]
             else:
-                json_text = response_text
+                # 没有找到JSON结构，可能是纯文本响应
+                # 尝试将纯文本转换为JSON格式
+                self.logger.warning("响应中没有找到JSON结构，尝试将纯文本转换为JSON")
+                json_text = self._convert_text_to_json(response_text, analysis_type)
             
             # 清理JSON文本
             json_text = self._clean_json_text(json_text)
@@ -603,12 +640,18 @@ class LLMAnalyzer:
             
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON解析失败: {str(e)}")
-            self.logger.error(f"原始响应: {response_text[:500]}...")
+            self.logger.error(f"错误位置: 行 {e.lineno}, 列 {e.colno}")
+            self.logger.error(f"尝试解析的JSON文本（前500字符）: {json_text[:500] if 'json_text' in locals() else response_text[:500]}")
+            self.logger.error(f"原始响应（前1000字符）: {response_text[:1000]}")
             
             # 尝试修复常见的JSON错误
             try:
-                fixed_json = self._fix_json_errors(json_text)
+                if 'json_text' in locals():
+                    fixed_json = self._fix_json_errors(json_text)
+                else:
+                    fixed_json = self._fix_json_errors(response_text)
                 result = json.loads(fixed_json)
+                self.logger.info("JSON自动修复成功")
                 return {
                     "content": fixed_json,  # 修复后的JSON文本
                     "parsed": result,       # 解析后的对象
@@ -616,21 +659,90 @@ class LLMAnalyzer:
                     "timestamp": time.time(),
                     "warning": "JSON已自动修复"
                 }
-            except:
-                pass
+            except Exception as fix_error:
+                self.logger.error(f"JSON修复也失败: {str(fix_error)}")
+                # 尝试更激进的修复：直接截断未闭合的字符串
+                try:
+                    if 'json_text' in locals():
+                        aggressive_fixed = self._aggressive_fix_json(json_text)
+                    else:
+                        aggressive_fixed = self._aggressive_fix_json(response_text)
+                    result = json.loads(aggressive_fixed)
+                    self.logger.info("使用激进修复策略成功")
+                    return {
+                        "content": aggressive_fixed,
+                        "parsed": result,
+                        "analysis_type": analysis_type,
+                        "timestamp": time.time(),
+                        "warning": "JSON已使用激进修复策略修复（可能丢失部分内容）"
+                    }
+                except Exception as aggressive_error:
+                    self.logger.error(f"激进修复也失败: {str(aggressive_error)}")
+                    # 最后尝试：直接提取translated_text字段（如果是翻译响应）
+                    if analysis_type == "translation":
+                        try:
+                            # 尝试从原始响应中提取translated_text
+                            translated_match = re.search(r'"translated_text"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', response_text, re.DOTALL)
+                            if not translated_match:
+                                # 尝试更宽松的匹配，包括未闭合的字符串
+                                translated_match = re.search(r'"translated_text"\s*:\s*"([^"]*)"', response_text[:5000])  # 只匹配前5000字符
+                            
+                            if translated_match:
+                                translated_text = translated_match.group(1)
+                                # 转义未转义的换行符等
+                                translated_text = translated_text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                                result = {
+                                    "translated_text": translated_text,
+                                    "original_text": "",
+                                    "source_language": "未知",
+                                    "target_language": "未知",
+                                    "translation_quality": "一般",
+                                    "notes": "JSON解析失败，已从响应中提取部分翻译内容"
+                                }
+                                self.logger.info("从响应中提取部分翻译内容成功")
+                                return {
+                                    "content": json.dumps(result, ensure_ascii=False),
+                                    "parsed": result,
+                                    "analysis_type": analysis_type,
+                                    "timestamp": time.time(),
+                                    "warning": "JSON解析失败，已从响应中提取部分内容"
+                                }
+                        except Exception as extract_error:
+                            self.logger.error(f"提取部分内容也失败: {str(extract_error)}")
+            
+            # 如果JSON修复也失败，尝试将纯文本转换为JSON
+            try:
+                self.logger.info("尝试将纯文本响应转换为JSON格式")
+                converted_json = self._convert_text_to_json(response_text, analysis_type)
+                result = json.loads(converted_json)
+                self.logger.info("纯文本转换为JSON成功")
+                return {
+                    "content": converted_json,  # 转换后的JSON文本
+                    "parsed": result,           # 解析后的对象
+                    "analysis_type": analysis_type,
+                    "timestamp": time.time(),
+                    "warning": "原始响应为纯文本格式，已自动转换为JSON"
+                }
+            except Exception as convert_error:
+                self.logger.error(f"纯文本转换JSON也失败: {str(convert_error)}")
             
             return {
                 "error": "JSON解析失败",
-                "error_details": str(e),
+                "error_details": f"{str(e)} (行 {e.lineno}, 列 {e.colno})",
                 "raw_response": response_text,
+                "json_text_attempted": json_text if 'json_text' in locals() else None,
                 "analysis_type": analysis_type,
-                "suggestion": "请检查大模型返回的JSON格式是否正确"
+                "suggestion": "请检查大模型返回的JSON格式是否正确。可能是JSON被截断或不完整。已尝试将纯文本转换为JSON但失败。"
             }
         except Exception as e:
             self.logger.error(f"响应处理失败: {str(e)}")
+            self.logger.error(f"异常类型: {type(e).__name__}")
+            import traceback
+            self.logger.error(f"异常堆栈: {traceback.format_exc()}")
             return {
-                "error": str(e),
-                "raw_response": response_text,
+                "error": f"响应处理失败: {str(e)}",
+                "error_type": type(e).__name__,
+                "raw_response": response_text[:2000] if response_text else None,
                 "analysis_type": analysis_type
             }
     
@@ -655,41 +767,194 @@ class LLMAnalyzer:
         """尝试修复常见的JSON错误"""
         import re
         
+        if not json_text or not json_text.strip():
+            return '{}'
+        
         # 移除可能的截断标记
-        json_text = json_text.replace('...', '')
+        json_text = json_text.replace('...', '').replace('…', '')
+        
+        # 首先尝试修复未转义的换行符和特殊字符（在字符串值中）
+        # 这是一个更复杂的问题：需要在字符串值内部转义换行符，但不能破坏JSON结构
+        # 使用状态机方法：跟踪是否在字符串内部
+        fixed_chars = []
+        in_string = False
+        escape_next = False
+        i = 0
+        while i < len(json_text):
+            char = json_text[i]
+            
+            if escape_next:
+                # 当前字符是转义字符后的字符，直接添加
+                fixed_chars.append(char)
+                escape_next = False
+            elif char == '\\':
+                # 转义字符
+                fixed_chars.append(char)
+                escape_next = True
+            elif char == '"':
+                # 检查是否是转义的引号
+                # 计算前面连续的反斜杠数量
+                backslash_count = 0
+                j = i - 1
+                while j >= 0 and json_text[j] == '\\':
+                    backslash_count += 1
+                    j -= 1
+                # 如果反斜杠数量是偶数，说明这个引号没有被转义
+                if backslash_count % 2 == 0:
+                    # 字符串的开始或结束（未转义的引号）
+                    in_string = not in_string
+                fixed_chars.append(char)
+            elif in_string:
+                # 在字符串内部
+                if char == '\n':
+                    # 未转义的换行符，需要转义
+                    fixed_chars.append('\\n')
+                elif char == '\r':
+                    # 未转义的回车符，需要转义
+                    fixed_chars.append('\\r')
+                elif char == '\t':
+                    # 未转义的制表符，需要转义
+                    fixed_chars.append('\\t')
+                elif char == '\x00':
+                    # 空字符，移除或转义
+                    fixed_chars.append('\\u0000')
+                else:
+                    fixed_chars.append(char)
+            else:
+                # 不在字符串内部
+                fixed_chars.append(char)
+            
+            i += 1
+        
+        json_text = ''.join(fixed_chars)
+        
+        # 如果JSON文本看起来不完整（没有以{开头），尝试找到第一个{
+        # 移除开头可能的换行符和空格
+        json_text = json_text.lstrip()
+        if not json_text.startswith('{'):
+            brace_start = json_text.find('{')
+            if brace_start >= 0:
+                json_text = json_text[brace_start:]
+            else:
+                # 如果没有找到{，可能是格式完全错误，尝试添加
+                if json_text.strip():
+                    json_text = '{' + json_text
         
         # 修复缺少逗号的问题
         # 在}后面跟{的情况添加逗号
         json_text = re.sub(r'}\s*{', '},{', json_text)
         
         # 修复缺少逗号的问题
-        # 在"后面跟"的情况添加逗号
-        json_text = re.sub(r'"\s*"', '","', json_text)
+        # 在"后面跟"的情况添加逗号（但排除转义的引号）
+        json_text = re.sub(r'(?<!\\)"\s*"', '","', json_text)
         
         # 修复缺少逗号的问题
         # 在数字后面跟"的情况添加逗号
         json_text = re.sub(r'(\d+)\s*"', r'\1,"', json_text)
         
         # 修复缺少逗号的问题
-        # 在true/false后面跟"的情况添加逗号
-        json_text = re.sub(r'(true|false)\s*"', r'\1,"', json_text)
+        # 在true/false/null后面跟"的情况添加逗号
+        json_text = re.sub(r'(true|false|null)\s*"', r'\1,"', json_text)
         
         # 修复截断的JSON - 如果JSON不完整，尝试补全
         if not json_text.strip().endswith('}'):
-            # 计算未闭合的大括号
+            # 计算未闭合的大括号（考虑嵌套）
             open_braces = json_text.count('{')
             close_braces = json_text.count('}')
             missing_braces = open_braces - close_braces
             
-            # 补全缺失的大括号
-            json_text += '}' * missing_braces
+            if missing_braces > 0:
+                # 检查最后一个未闭合的值，如果是字符串、数组等，先闭合它们
+                # 找到最后一个未闭合的键值对
+                last_colon = json_text.rfind(':')
+                if last_colon > 0:
+                    after_colon = json_text[last_colon+1:].strip()
+                    # 如果是未闭合的字符串
+                    if after_colon.startswith('"') and not after_colon.endswith('"'):
+                        json_text += '"'
+                    # 如果是未闭合的数组
+                    elif after_colon.startswith('['):
+                        open_brackets = after_colon.count('[')
+                        close_brackets = after_colon.count(']')
+                        if open_brackets > close_brackets:
+                            json_text += ']' * (open_brackets - close_brackets)
+                
+                # 补全缺失的大括号
+                json_text += '}' * missing_braces
         
-        # 修复截断的字符串值
-        json_text = re.sub(r'"([^"]*)$', r'"\1"', json_text)
+        # 修复截断的字符串值（更安全的方式）
+        # 使用状态机检查是否有未闭合的字符串
+        in_string_check = False
+        escape_next_check = False
+        for i, char in enumerate(json_text):
+            if escape_next_check:
+                escape_next_check = False
+                continue
+            elif char == '\\':
+                escape_next_check = True
+            elif char == '"':
+                # 检查是否是转义的引号
+                backslash_count = 0
+                j = i - 1
+                while j >= 0 and json_text[j] == '\\':
+                    backslash_count += 1
+                    j -= 1
+                if backslash_count % 2 == 0:
+                    in_string_check = not in_string_check
+        
+        # 如果最后还在字符串内部，说明字符串未闭合
+        if in_string_check:
+            # 找到最后一个未转义的引号位置（字符串开始位置）
+            last_quote_pos = -1
+            for i in range(len(json_text) - 1, -1, -1):
+                if json_text[i] == '"':
+                    # 检查是否是转义的引号
+                    backslash_count = 0
+                    j = i - 1
+                    while j >= 0 and json_text[j] == '\\':
+                        backslash_count += 1
+                        j -= 1
+                    if backslash_count % 2 == 0:
+                        last_quote_pos = i
+                        break
+            
+            # 如果找到了未闭合的字符串，需要修复
+            if last_quote_pos >= 0:
+                # 检查字符串内容，如果包含未转义的特殊字符，先转义它们
+                string_content = json_text[last_quote_pos + 1:]
+                # 转义字符串中的特殊字符（如果还没有转义）
+                # 但要注意不要重复转义已经转义的字符
+                fixed_content = ""
+                i = 0
+                while i < len(string_content):
+                    char = string_content[i]
+                    if char == '\\' and i + 1 < len(string_content):
+                        # 已经是转义字符，保留
+                        fixed_content += char + string_content[i + 1]
+                        i += 2
+                    elif char in ['\n', '\r', '\t', '\x00']:
+                        # 未转义的特殊字符，需要转义
+                        if char == '\n':
+                            fixed_content += '\\n'
+                        elif char == '\r':
+                            fixed_content += '\\r'
+                        elif char == '\t':
+                            fixed_content += '\\t'
+                        elif char == '\x00':
+                            fixed_content += '\\u0000'
+                        i += 1
+                else:
+                        fixed_content += char
+                        i += 1
+                
+                # 替换字符串内容并添加结束引号
+                json_text = json_text[:last_quote_pos + 1] + fixed_content + '"'
         
         # 修复截断的数组
-        if json_text.count('[') > json_text.count(']'):
-            json_text += ']'
+        open_brackets = json_text.count('[')
+        close_brackets = json_text.count(']')
+        if open_brackets > close_brackets:
+            json_text += ']' * (open_brackets - close_brackets)
         
         # 修复截断的对象
         if json_text.count('{') > json_text.count('}'):
@@ -734,6 +999,265 @@ class LLMAnalyzer:
             json_text += ']' * (json_text.count('[') - json_text.count(']'))
         
         return json_text
+    
+    def _aggressive_fix_json(self, json_text: str) -> str:
+        """
+        激进修复JSON：直接截断未闭合的字符串，确保JSON可以解析
+        这可能会丢失部分内容，但至少能返回部分结果
+        """
+        import re
+        
+        if not json_text or not json_text.strip():
+            return '{}'
+        
+        # 找到第一个{的位置
+        start_pos = json_text.find('{')
+        if start_pos == -1:
+            return '{}'
+        
+        json_text = json_text[start_pos:]
+        
+        # 策略1：尝试找到最后一个完整的键值对
+        # 从后往前查找，找到最后一个完整的 "key": "value" 结构
+        last_complete_key_value = -1
+        in_string = False
+        escape_next = False
+        brace_count = 0
+        last_colon_pos = -1
+        last_comma_pos = -1
+        
+        # 从后往前扫描，找到最后一个完整的键值对
+        for i in range(len(json_text) - 1, -1, -1):
+            char = json_text[i]
+            
+            if escape_next:
+                escape_next = False
+                continue
+            elif char == '\\':
+                escape_next = True
+            elif char == '"':
+                # 检查是否是转义的引号
+                backslash_count = 0
+                j = i - 1
+                while j >= 0 and json_text[j] == '\\':
+                    backslash_count += 1
+                    j -= 1
+                if backslash_count % 2 == 0:
+                    in_string = not in_string
+            elif not in_string:
+                if char == ':':
+                    if last_colon_pos == -1:
+                        last_colon_pos = i
+                elif char == ',':
+                    if last_comma_pos == -1 and last_colon_pos > i:
+                        # 找到了一个完整的键值对（在冒号之后有逗号）
+                        last_complete_key_value = i + 1
+                        break
+                elif char == '}':
+                    brace_count += 1
+                elif char == '{':
+                    brace_count -= 1
+                    if brace_count < 0:
+                        # 找到了根对象的开始，但前面还有内容
+                        break
+        
+        # 如果找到了最后一个完整的键值对，截断到那里
+        if last_complete_key_value > 0:
+            json_text = json_text[:last_complete_key_value].rstrip()
+            # 移除末尾可能的逗号
+            if json_text.endswith(','):
+                json_text = json_text[:-1].rstrip()
+            # 补全闭合括号
+            open_braces = json_text.count('{')
+            close_braces = json_text.count('}')
+            if open_braces > close_braces:
+                json_text += '}' * (open_braces - close_braces)
+            return json_text
+        
+        # 策略2：如果策略1失败，尝试找到最后一个完整的字符串值并截断
+        in_string_check = False
+        escape_next_check = False
+        last_quote_pos = -1
+        last_colon_before_string = -1
+        
+        for i, char in enumerate(json_text):
+            if escape_next_check:
+                escape_next_check = False
+                continue
+            elif char == '\\':
+                escape_next_check = True
+            elif char == '"':
+                backslash_count = 0
+                j = i - 1
+                while j >= 0 and json_text[j] == '\\':
+                    backslash_count += 1
+                    j -= 1
+                if backslash_count % 2 == 0:
+                    if not in_string_check:
+                        # 字符串开始，检查前面是否有冒号
+                        # 向前查找最近的冒号
+                        for k in range(i - 1, -1, -1):
+                            if json_text[k] == ':':
+                                last_colon_before_string = k
+                                break
+                    in_string_check = not in_string_check
+                    if not in_string_check:
+                        last_quote_pos = i
+        
+        # 如果最后还在字符串内部，尝试截断
+        if in_string_check:
+            # 找到最后一个完整的键值对（在未闭合字符串之前）
+            # 向前查找最后一个逗号或冒号
+            truncate_pos = -1
+            for i in range(len(json_text) - 1, last_colon_before_string, -1):
+                if json_text[i] == ',':
+                    truncate_pos = i
+                    break
+            
+            if truncate_pos > 0:
+                # 截断到最后一个逗号
+                json_text = json_text[:truncate_pos].rstrip()
+                # 补全闭合括号
+                open_braces = json_text.count('{')
+                close_braces = json_text.count('}')
+                if open_braces > close_braces:
+                    json_text += '}' * (open_braces - close_braces)
+                return json_text
+            else:
+                # 如果找不到逗号，直接截断到冒号位置并添加空字符串
+                if last_colon_before_string > 0:
+                    json_text = json_text[:last_colon_before_string + 1] + ' ""'
+                    # 补全闭合括号
+                    open_braces = json_text.count('{')
+                    close_braces = json_text.count('}')
+                    if open_braces > close_braces:
+                        json_text += '}' * (open_braces - close_braces)
+                    return json_text
+        
+        # 策略3：如果都失败了，尝试最简单的修复：补全括号
+        open_braces = json_text.count('{')
+        close_braces = json_text.count('}')
+        if open_braces > close_braces:
+            # 移除末尾可能的未闭合字符串
+            if json_text.rstrip().endswith('"'):
+                # 已经是完整的字符串，直接补全括号
+                json_text = json_text.rstrip() + '}' * (open_braces - close_braces)
+            else:
+                # 可能有未闭合的字符串，尝试修复
+                # 找到最后一个冒号
+                last_colon = json_text.rfind(':')
+                if last_colon > 0:
+                    after_colon = json_text[last_colon + 1:].strip()
+                    if after_colon.startswith('"') and not after_colon.endswith('"'):
+                        # 未闭合的字符串，添加结束引号
+                        json_text = json_text.rstrip() + '"'
+                json_text += '}' * (open_braces - close_braces)
+        
+        return json_text
+    
+    def _convert_text_to_json(self, text: str, analysis_type: str) -> str:
+        """
+        将纯文本响应转换为JSON格式
+        
+        Args:
+            text: 纯文本响应
+            analysis_type: 分析类型
+            
+        Returns:
+            JSON格式的字符串
+        """
+        import re
+        
+        # 尝试提取结构化内容
+        result_dict = {}
+        
+        # 检测是否是列表格式（如 "1. **项目** - 描述" 或 "**项目** - 描述"）
+        # 提取所有列表项
+        list_items = []
+        
+        # 匹配数字开头的列表项：1. **关键词** - 描述 或 1. **关键词** - 翻译
+        # 更宽松的匹配，允许各种分隔符和换行
+        # 格式：1. **Blundstone** - 布伦斯通
+        pattern1 = r'(\d+)\.\s*\*\*(.+?)\*\*\s*[-–—~～]\s*(.+?)(?=\n\d+\.|\n\*\*|\n\n|$)'
+        matches1 = re.findall(pattern1, text, re.MULTILINE)
+        
+        # 匹配**关键词** - 描述的格式（没有数字）
+        pattern2 = r'\*\*(.+?)\*\*\s*[-–—]\s*(.+?)(?=\n|$)'
+        matches2 = re.findall(pattern2, text, re.MULTILINE | re.DOTALL)
+        
+        # 匹配简单的编号列表：1. 内容
+        pattern3 = r'(\d+)\.\s*(.+?)(?=\n\d+\.|\n\n|$)'
+        matches3 = re.findall(pattern3, text, re.MULTILINE | re.DOTALL)
+        
+        if matches1:
+            # 格式：1. **品牌** - 翻译
+            for num, key, value in matches1:
+                cleaned_key = key.strip()
+                cleaned_value = value.strip().replace('\n', ' ').replace('  ', ' ')
+                # 判断是品牌-翻译格式还是其他格式
+                if len(cleaned_value) < 50:  # 如果是翻译，通常较短
+                    list_items.append({
+                        "name": cleaned_key,
+                        "translation": cleaned_value
+                    })
+                else:
+                    list_items.append({
+                        "name": cleaned_key,
+                        "description": cleaned_value
+                    })
+        elif matches2:
+            # 格式：**品牌** - 翻译
+            for key, value in matches2:
+                cleaned_key = key.strip()
+                cleaned_value = value.strip().replace('\n', ' ').replace('  ', ' ')
+                list_items.append({
+                    "name": cleaned_key,
+                    "description": cleaned_value
+                })
+        elif matches3:
+            # 格式：1. 内容
+            for num, content in matches3:
+                cleaned_content = content.strip().replace('\n', ' ').replace('  ', ' ')
+                list_items.append(cleaned_content)
+        
+        # 如果有提取到列表项，构建JSON
+        # 根据分析类型选择合适的JSON结构
+        if list_items:
+            if "品牌" in text or "brand" in text.lower() or "product" in text.lower():
+                result_dict = {
+                    "brands": list_items if isinstance(list_items[0], dict) else [{"name": item} for item in list_items],
+                    "total_count": len(list_items),
+                    "note": "从纯文本响应中提取的品牌信息"
+                }
+            elif "需求" in text or "need" in text.lower():
+                result_dict = {
+                    "user_needs": list_items if isinstance(list_items[0], str) else [item.get("name", item) for item in list_items],
+                    "total_count": len(list_items),
+                    "note": "从纯文本响应中提取的用户需求"
+                }
+            elif "痛点" in text or "pain" in text.lower():
+                result_dict = {
+                    "pain_points": list_items if isinstance(list_items[0], str) else [item.get("name", item) for item in list_items],
+                    "total_count": len(list_items),
+                    "note": "从纯文本响应中提取的痛点"
+                }
+            else:
+                # 通用格式
+                result_dict = {
+                    "items": list_items,
+                    "total_count": len(list_items),
+                    "raw_content": text[:1000],  # 保留原始内容的前1000字符
+                    "note": "原始响应为纯文本格式，已转换为JSON结构"
+                }
+        else:
+            # 如果没有识别到特定格式，将整个文本作为内容
+            result_dict = {
+                "content": text,
+                "note": "原始响应为纯文本格式，已转换为JSON结构"
+            }
+        
+        # 转换为JSON字符串
+        return json.dumps(result_dict, ensure_ascii=False, indent=2)
     
     def _is_json_truncated(self, json_text: str) -> bool:
         """检测JSON是否被截断"""
@@ -811,7 +1335,7 @@ class LLMAnalyzer:
                 }
                 
                 data = {
-                    "model": "deepseek-chat",
+                    "model": "deepseek-chat",  # 尝试使用正确的模型名称
                     "messages": [
                         {
                             "role": "system",
@@ -828,13 +1352,22 @@ class LLMAnalyzer:
                 }
                 
                 # 使用更长的超时时间，并添加连接超时
+                # DeepSeek API端点：https://api.deepseek.com/v1/chat/completions
+                # 确保URL格式正确
+                if not self.deepseek_base_url.endswith('/'):
+                    api_url = f"{self.deepseek_base_url}/v1/chat/completions"
+                else:
+                    api_url = f"{self.deepseek_base_url}v1/chat/completions"
+                self.logger.debug(f"DeepSeek API请求: URL={api_url}, Model={data['model']}")
                 response = requests.post(
-                    f"{self.deepseek_base_url}/chat/completions",
+                    api_url,
                     headers=headers,
                     json=data,
                     timeout=(60, 300),  # (连接超时, 读取超时) - 增加到5分钟
                     verify=True
                 )
+                
+                self.logger.debug(f"DeepSeek API响应: Status={response.status_code}")
                 
                 if response.status_code == 200:
                     result = response.json()
@@ -842,7 +1375,15 @@ class LLMAnalyzer:
                     self.logger.info(f"DeepSeek API调用成功 (尝试 {attempt + 1})")
                     return self._parse_json_response(result_text, analysis_type)
                 else:
-                    self.logger.error(f"DeepSeek API调用失败: {response.status_code} - {response.text}")
+                    error_text = response.text[:500] if response.text else "无响应内容"
+                    self.logger.error(f"DeepSeek API调用失败: {response.status_code} - {error_text}")
+                    if response.status_code == 404:
+                        self.logger.error(f"API端点不存在 (404): URL={api_url}, Model={data['model']}")
+                        self.logger.error("请检查：1) API URL是否正确 2) 模型名称是否正确 3) API密钥是否有效")
+                    elif response.status_code == 401:
+                        self.logger.error("API密钥无效 (401)，请检查api_keys.json中的deepseek_api_key配置")
+                    elif response.status_code == 400:
+                        self.logger.error(f"请求参数错误 (400): {error_text}")
                     if attempt < max_retries - 1:
                         # 指数退避策略
                         delay = min(base_delay * (2 ** attempt), max_delay)
@@ -878,3 +1419,373 @@ class LLMAnalyzer:
                 return {"error": str(e)}
         
         return {"error": "所有重试尝试都失败了"}
+    
+    # ==================== 语言检测和翻译功能 ====================
+    
+    def detect_language(self, text: str, provider: str = "deepseek") -> Dict[str, Any]:
+        """
+        检测文本语言
+        
+        Args:
+            text: 要检测的文本
+            provider: 使用的LLM提供商
+            
+        Returns:
+            语言检测结果
+        """
+        try:
+            prompt = f"""
+请检测以下文本的语言：
+
+文本：{text}
+
+请以JSON格式返回结果：
+{{
+    "language": "检测到的语言名称（如：中文、英文、日文等）",
+    "language_code": "语言代码（如：zh、en、ja等）",
+    "confidence": "置信度（0-1之间的数字）",
+    "is_chinese": true/false,
+    "is_english": true/false
+}}
+
+要求：
+1. 准确识别文本的主要语言
+2. 提供标准化的语言代码
+3. 给出合理的置信度评估
+4. 明确标识是否为中文或英文
+"""
+            
+            response = self._call_llm(prompt, provider, "language_detection")
+            
+            if isinstance(response, dict) and 'content' in response:
+                result = self._parse_json_response(response['content'], "language_detection")
+                if result and 'language' in result:
+                    return {
+                        'success': True,
+                        'language': result.get('language', '未知'),
+                        'language_code': result.get('language_code', 'unknown'),
+                        'confidence': result.get('confidence', 0.0),
+                        'is_chinese': result.get('is_chinese', False),
+                        'is_english': result.get('is_english', False)
+                    }
+            
+            # 如果解析失败，使用简单的规则检测
+            return self._simple_language_detection(text)
+            
+        except Exception as e:
+            self.logger.error(f"语言检测失败: {str(e)}")
+            return self._simple_language_detection(text)
+    
+    def translate_text(self, text: str, target_language: str = "英文", 
+                      provider: str = "deepseek", context: str = None) -> Dict[str, Any]:
+        """
+        翻译文本
+        
+        Args:
+            text: 要翻译的文本
+            target_language: 目标语言
+            provider: 使用的LLM提供商
+            context: 上下文信息（可选）
+            
+        Returns:
+            翻译结果
+        """
+        try:
+            # 检查内容长度（估算token数，1个中文字符约等于1-2个token，1个英文单词约等于1.3个token）
+            # 保守估计：8000字符约等于10000-12000 tokens
+            # 考虑到prompt本身会占用一些token，以及需要返回的JSON，限制原文长度为6000字符
+            MAX_TEXT_LENGTH = 6000
+            original_length = len(text)
+            truncated = False
+            truncation_note = ""
+            
+            if original_length > MAX_TEXT_LENGTH:
+                # 截断文本
+                text = text[:MAX_TEXT_LENGTH]
+                truncated = True
+                truncation_note = f"注意：原文长度({original_length}字符)超过最大输入限制({MAX_TEXT_LENGTH}字符)，已截断至前{MAX_TEXT_LENGTH}字符进行翻译。"
+                self.logger.warning(f"翻译内容过长({original_length}字符)，已截断至{MAX_TEXT_LENGTH}字符")
+            
+            # 构建翻译提示
+            context_info = ""
+            if context:
+                context_info = f"\n上下文信息：{context}"
+            
+            if truncated:
+                context_info += f"\n\n{truncation_note}"
+            
+            prompt = f"""
+请将以下文本翻译为{target_language}：
+
+原文：{text}{context_info}
+
+请以JSON格式返回结果：
+{{
+    "translated_text": "翻译后的文本",
+    "original_text": "原始文本",
+    "source_language": "源语言",
+    "target_language": "目标语言",
+    "translation_quality": "翻译质量评估（优秀/良好/一般）",
+    "notes": "翻译说明或注意事项（如果有）"
+}}
+
+要求：
+1. 保持原文的语调和风格
+2. 确保翻译准确、自然
+3. 如果是Reddit帖子，要符合Reddit社区的用语习惯
+4. 保持专业术语的准确性
+5. 如果涉及技术内容，保持技术准确性
+"""
+            
+            response = self._call_llm(prompt, provider, "translation")
+            
+            # 首先处理包含已解析内容的情况
+            if isinstance(response, dict) and 'parsed' in response:
+                parsed = response['parsed']
+                notes = parsed.get('notes', '')
+                if truncated:
+                    notes = f"{truncation_note}\n{notes}" if notes else truncation_note
+                return {
+                    'success': True,
+                    'translated_text': parsed.get('translated_text', parsed if isinstance(parsed, str) else ''),
+                    'original_text': parsed.get('original_text', text[:MAX_TEXT_LENGTH] if truncated else text),
+                    'source_language': parsed.get('source_language', '未知'),
+                    'target_language': parsed.get('target_language', target_language),
+                    'translation_quality': parsed.get('translation_quality', '良好'),
+                    'notes': notes,
+                    'truncated': truncated,
+                    'original_length': original_length if truncated else None
+                }
+            
+            # 其次尝试解析content中的JSON
+            if isinstance(response, dict) and 'content' in response:
+                result = self._parse_json_response(response['content'], "translation")
+                if isinstance(result, dict) and 'parsed' in result:
+                    parsed = result['parsed']
+                    if isinstance(parsed, dict) and 'translated_text' in parsed:
+                        notes = parsed.get('notes', '')
+                        if truncated:
+                            notes = f"{truncation_note}\n{notes}" if notes else truncation_note
+                    return {
+                        'success': True,
+                            'translated_text': parsed.get('translated_text', ''),
+                            'original_text': parsed.get('original_text', text[:MAX_TEXT_LENGTH] if truncated else text),
+                            'source_language': parsed.get('source_language', '未知'),
+                            'target_language': parsed.get('target_language', target_language),
+                            'translation_quality': parsed.get('translation_quality', '良好'),
+                            'notes': notes,
+                            'truncated': truncated,
+                            'original_length': original_length if truncated else None
+                    }
+                
+                # 解析失败则降级为将纯文本作为译文返回
+                raw = response.get('content') or ''
+                cleaned = raw.replace('```json', '').replace('```', '').strip()
+                notes = '已使用纯文本降级解析'
+                if truncated:
+                    notes = f"{truncation_note}\n{notes}"
+                return {
+                    'success': True,
+                    'translated_text': cleaned if cleaned else (text[:MAX_TEXT_LENGTH] if truncated else text),
+                    'original_text': text[:MAX_TEXT_LENGTH] if truncated else text,
+                    'source_language': '未知',
+                    'target_language': target_language,
+                    'translation_quality': '一般',
+                    'notes': notes,
+                    'truncated': truncated,
+                    'original_length': original_length if truncated else None
+                }
+            
+            # 无法识别响应结构，直接返回原文作为译文
+            notes = '无法解析模型响应，已使用原文'
+            if truncated:
+                notes = f"{truncation_note}\n{notes}"
+            return {
+                'success': True,
+                'translated_text': text[:MAX_TEXT_LENGTH] if truncated else text,
+                'original_text': text[:MAX_TEXT_LENGTH] if truncated else text,
+                'source_language': '未知',
+                'target_language': target_language,
+                'translation_quality': '一般',
+                'notes': notes,
+                'truncated': truncated,
+                'original_length': original_length if truncated else None
+            }
+            
+        except Exception as e:
+            self.logger.error(f"翻译失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'original_text': text
+            }
+    
+    def translate_for_reddit(self, text: str, subreddit_name: str = None, 
+                           post_type: str = "讨论", provider: str = "deepseek") -> Dict[str, Any]:
+        """
+        专门为Reddit翻译文本
+        
+        Args:
+            text: 要翻译的文本
+            subreddit_name: 目标子版块名称
+            post_type: 帖子类型
+            provider: 使用的LLM提供商
+            
+        Returns:
+            Reddit专用翻译结果
+        """
+        try:
+            # 构建Reddit专用翻译提示
+            subreddit_info = f"目标子版块：r/{subreddit_name}" if subreddit_name else ""
+            
+            prompt = f"""
+请将以下文本翻译为英文，用于Reddit社区发帖：
+
+原文：{text}
+
+{subreddit_info}
+帖子类型：{post_type}
+
+请以JSON格式返回结果：
+{{
+    "translated_text": "翻译后的英文文本",
+    "original_text": "原始文本",
+    "reddit_style": "Reddit风格调整说明",
+    "community_fit": "社区适配说明",
+    "suggestions": "发帖建议",
+    "hashtags": "建议的标签（如果有）"
+}}
+
+要求：
+1. 使用自然、地道的英文
+2. 符合Reddit社区的用语习惯
+3. 保持原文的核心信息和情感
+4. 使用适当的Reddit术语和表达方式
+5. 如果是技术内容，使用标准的技术英语
+6. 保持帖子的吸引力和可读性
+7. 考虑目标子版块的特点和规则
+"""
+            
+            response = self._call_llm(prompt, provider, "reddit_translation")
+            
+            # 优先使用已解析内容
+            if isinstance(response, dict) and 'parsed' in response:
+                parsed = response['parsed']
+                return {
+                    'success': True,
+                    'translated_text': parsed.get('translated_text', parsed if isinstance(parsed, str) else ''),
+                    'original_text': parsed.get('original_text', text),
+                    'reddit_style': parsed.get('reddit_style', ''),
+                    'community_fit': parsed.get('community_fit', ''),
+                    'suggestions': parsed.get('suggestions', ''),
+                    'hashtags': parsed.get('hashtags', '')
+                }
+            
+            # 其次尝试解析content中的JSON
+            if isinstance(response, dict) and 'content' in response:
+                result = self._parse_json_response(response['content'], "reddit_translation")
+                if isinstance(result, dict) and 'error' not in result and 'translated_text' in result:
+                    return {
+                        'success': True,
+                        'translated_text': result.get('translated_text', ''),
+                        'original_text': result.get('original_text', text),
+                        'reddit_style': result.get('reddit_style', ''),
+                        'community_fit': result.get('community_fit', ''),
+                        'suggestions': result.get('suggestions', ''),
+                        'hashtags': result.get('hashtags', '')
+                    }
+                
+                # 解析失败则降级为将纯文本作为译文返回
+                raw = response.get('content') or ''
+                cleaned = raw.replace('```json', '').replace('```', '').strip()
+                return {
+                    'success': True,
+                    'translated_text': cleaned if cleaned else text,
+                    'original_text': text,
+                    'reddit_style': '',
+                    'community_fit': '',
+                    'suggestions': '',
+                    'hashtags': ''
+                }
+            
+            # 最后降级到通用翻译
+            return self.translate_text(text, "英文", provider, f"Reddit {post_type} 帖子")
+            
+        except Exception as e:
+            self.logger.error(f"Reddit翻译失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'original_text': text
+            }
+    
+    def _simple_language_detection(self, text: str) -> Dict[str, Any]:
+        """
+        简单的语言检测（备用方法）
+        
+        Args:
+            text: 要检测的文本
+            
+        Returns:
+            语言检测结果
+        """
+        try:
+            # 统计中文字符
+            chinese_chars = len([c for c in text if '\u4e00' <= c <= '\u9fff'])
+            # 统计英文字符
+            english_chars = len([c for c in text if c.isalpha() and ord(c) < 128])
+            # 总字符数
+            total_chars = len([c for c in text if c.isalpha()])
+            
+            if total_chars == 0:
+                return {
+                    'success': True,
+                    'language': '未知',
+                    'language_code': 'unknown',
+                    'confidence': 0.0,
+                    'is_chinese': False,
+                    'is_english': False
+                }
+            
+            chinese_ratio = chinese_chars / total_chars
+            english_ratio = english_chars / total_chars
+            
+            if chinese_ratio > 0.3:
+                return {
+                    'success': True,
+                    'language': '中文',
+                    'language_code': 'zh',
+                    'confidence': min(chinese_ratio, 1.0),
+                    'is_chinese': True,
+                    'is_english': False
+                }
+            elif english_ratio > 0.5:
+                return {
+                    'success': True,
+                    'language': '英文',
+                    'language_code': 'en',
+                    'confidence': min(english_ratio, 1.0),
+                    'is_chinese': False,
+                    'is_english': True
+                }
+            else:
+                return {
+                    'success': True,
+                    'language': '混合语言',
+                    'language_code': 'mixed',
+                    'confidence': 0.5,
+                    'is_chinese': chinese_ratio > 0.1,
+                    'is_english': english_ratio > 0.1
+                }
+                
+        except Exception as e:
+            self.logger.error(f"简单语言检测失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'language': '未知',
+                'language_code': 'unknown',
+                'confidence': 0.0,
+                'is_chinese': False,
+                'is_english': False
+            }

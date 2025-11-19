@@ -2,14 +2,14 @@
 数据库模块 - 使用SQLAlchemy管理本地数据库
 存储Reddit帖子和评论数据
 """
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import logging
 import json
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from config import Config
 
 Base = declarative_base()
@@ -117,7 +117,6 @@ class StructuredExtraction(Base):
     mentioned_tools = Column(JSON)  # 存储为JSON数组
     evidence_sentences = Column(JSON)  # 存储为JSON数组
     confidence_score = Column(Float)
-    long_tail_keywords = Column(JSON)  # 长尾关键词，存储为JSON数组
     
     # 元数据
     extraction_timestamp = Column(DateTime, default=datetime.utcnow)
@@ -194,21 +193,144 @@ class BusinessInsight(Base):
         {'extend_existing': True}
     )
 
-class KeywordStatistic(Base):
-    """关键词统计表（全局去重）"""
-    __tablename__ = 'keyword_statistics'
+class SubredditIndex(Base):
+    """子版块索引表"""
+    __tablename__ = 'subreddit_index'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    keyword = Column(String, nullable=False)  # 关键词
-    category = Column(String)  # 类别: all, main_topic, pain_point, user_need
-    frequency = Column(Integer, default=1)  # 出现频率
-    tfidf_score = Column(Float, default=0.0)  # TF-IDF得分
-    first_seen = Column(DateTime, default=datetime.utcnow)  # 首次出现时间
-    last_seen = Column(DateTime, default=datetime.utcnow)  # 最后出现时间
+    subreddit_name = Column(String, unique=True, nullable=False)  # 子版块名称
+    title = Column(String)  # 子版块标题
+    description = Column(Text)  # 子版块描述
+    public_description = Column(Text)  # 公开描述
+    subscriber_count = Column(Integer)  # 订阅者数量
     
-    # 添加唯一约束
+    # 向量化内容
+    avg_vector = Column(JSON)  # 平均向量
+    keywords = Column(JSON)  # 关键词列表
+    main_topics = Column(JSON)  # 主要主题
+    
+    # 关联的帖子数据（用于展示）
+    posts_data = Column(JSON)  # 帖子数据列表
+    
+    # 元数据
+    indexed_at = Column(DateTime, default=datetime.utcnow)  # 索引时间
+    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 最后更新时间
+
+class UserInteractions(Base):
+    """用户互动记录表"""
+    __tablename__ = 'user_interactions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(String, nullable=False)  # 帖子ID
+    comment_id = Column(String)  # 评论ID（可选）
+    interaction_type = Column(String, nullable=False)  # 互动类型：upvote, downvote, save, follow, subscribe
+    target_user = Column(String)  # 目标用户
+    target_subreddit = Column(String)  # 目标子版块
+    created_at = Column(DateTime, default=datetime.utcnow)  # 互动时间
+    status = Column(String, default='success')  # 状态：success, failed, pending
+    error_message = Column(Text)  # 错误信息（如果失败）
+    
+    # 索引
     __table_args__ = (
-        {'extend_existing': True}
+        Index('idx_post_interaction', 'post_id', 'interaction_type'),
+        Index('idx_user_interaction', 'target_user', 'interaction_type'),
+        Index('idx_subreddit_interaction', 'target_subreddit', 'interaction_type'),
+    )
+
+class PostMonitoring(Base):
+    """帖子监控表"""
+    __tablename__ = 'post_monitoring'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(String, unique=True, nullable=False)  # 帖子ID
+    subreddit_name = Column(String, nullable=False)  # 子版块名称
+    monitor_type = Column(String, nullable=False)  # 监控类型：comments, votes, saves, follows
+    last_check_time = Column(DateTime, default=datetime.utcnow)  # 最后检查时间
+    is_active = Column(Boolean, default=True)  # 是否激活
+    notification_settings = Column(JSON)  # 通知设置
+    created_at = Column(DateTime, default=datetime.utcnow)  # 创建时间
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 更新时间
+    
+    # 索引
+    __table_args__ = (
+        Index('idx_post_monitor', 'post_id', 'is_active'),
+        Index('idx_subreddit_monitor', 'subreddit_name', 'is_active'),
+    )
+
+class InteractionStats(Base):
+    """互动统计表"""
+    __tablename__ = 'interaction_stats'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(String, unique=True, nullable=False)  # 帖子ID
+    subreddit_name = Column(String, nullable=False)  # 子版块名称
+    total_upvotes = Column(Integer, default=0)  # 总点赞数
+    total_downvotes = Column(Integer, default=0)  # 总点踩数
+    total_comments = Column(Integer, default=0)  # 总评论数
+    total_saves = Column(Integer, default=0)  # 总保存数
+    engagement_score = Column(Float, default=0.0)  # 互动评分
+    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # 最后更新时间
+    created_at = Column(DateTime, default=datetime.utcnow)  # 创建时间
+    
+    # 索引
+    __table_args__ = (
+        Index('idx_post_stats', 'post_id'),
+        Index('idx_subreddit_stats', 'subreddit_name'),
+        Index('idx_engagement_score', 'engagement_score'),
+    )
+
+class UserFollows(Base):
+    """用户关注表"""
+    __tablename__ = 'user_follows'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    target_username = Column(String, nullable=False)  # 关注用户名
+    follow_type = Column(String, nullable=False)  # 关注类型：follow, unfollow
+    followed_at = Column(DateTime, default=datetime.utcnow)  # 关注时间
+    user_activity_score = Column(Float, default=0.0)  # 用户活跃度评分
+    last_interaction = Column(DateTime)  # 最后互动时间
+    interaction_count = Column(Integer, default=0)  # 互动次数
+    is_active = Column(Boolean, default=True)  # 是否激活关注
+    
+    # 索引
+    __table_args__ = (
+        Index('idx_user_follow', 'target_username', 'is_active'),
+        Index('idx_follow_type', 'follow_type', 'is_active'),
+    )
+
+class AccountSnapshots(Base):
+    """账号快照表（每日记录业力与活跃数据）"""
+    __tablename__ = 'account_snapshots'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_time = Column(DateTime, default=datetime.utcnow)
+    link_karma = Column(Integer, default=0)
+    comment_karma = Column(Integer, default=0)
+    total_karma = Column(Integer, default=0)
+    account_age_days = Column(Integer, default=0)
+    subs_joined = Column(Integer, default=0)
+    upvotes = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    posts = Column(Integer, default=0)
+    
+    __table_args__ = (
+        Index('idx_snapshot_time', 'snapshot_time'),
+    )
+
+class SubredditReadiness(Base):
+    """子版块发帖资格判定表"""
+    __tablename__ = 'subreddit_readiness'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subreddit = Column(String, nullable=False)
+    can_post = Column(Boolean, default=False)
+    confidence = Column(String, default='Low')
+    reasons = Column(JSON)  # 列表
+    recommendations = Column(JSON)  # 列表
+    checked_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_readiness_subreddit', 'subreddit', 'checked_at'),
     )
 
 class DatabaseManager:
@@ -226,6 +348,17 @@ class DatabaseManager:
         self.SubredditInfo = SubredditInfo
         self.AnalysisResult = AnalysisResult
         self.PromptTemplate = PromptTemplate
+        self.StructuredExtraction = StructuredExtraction
+        self.VectorizedText = VectorizedText
+        self.ClusteringResult = ClusteringResult
+        self.BusinessInsight = BusinessInsight
+        self.SubredditIndex = SubredditIndex
+        self.UserInteractions = UserInteractions
+        self.PostMonitoring = PostMonitoring
+        self.InteractionStats = InteractionStats
+        self.UserFollows = UserFollows
+        self.AccountSnapshots = AccountSnapshots
+        self.SubredditReadiness = SubredditReadiness
         
         self.create_tables()
     
@@ -236,6 +369,72 @@ class DatabaseManager:
             self.logger.info("数据库表创建成功")
         except Exception as e:
             self.logger.error(f"创建数据库表失败: {str(e)}")
+
+    # ==================== 账号与子版块发帖资格相关 ====================
+    def save_account_snapshot(self, snapshot: dict) -> bool:
+        session = self.get_session()
+        try:
+            rec = AccountSnapshots(
+                snapshot_time=snapshot.get('snapshot_time', datetime.utcnow()),
+                link_karma=snapshot.get('link_karma', 0),
+                comment_karma=snapshot.get('comment_karma', 0),
+                total_karma=snapshot.get('total_karma', 0),
+                account_age_days=snapshot.get('account_age_days', 0),
+                subs_joined=snapshot.get('subs_joined', 0),
+                upvotes=snapshot.get('upvotes', 0),
+                comments=snapshot.get('comments', 0),
+                posts=snapshot.get('posts', 0),
+            )
+            session.add(rec)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存账号快照失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+
+    def get_latest_account_snapshot(self):
+        session = self.get_session()
+        try:
+            return session.query(AccountSnapshots).order_by(AccountSnapshots.snapshot_time.desc()).first()
+        except Exception as e:
+            self.logger.error(f"获取最新账号快照失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+
+    def save_subreddit_readiness(self, subreddit: str, can_post: bool, confidence: str, reasons: list, recommendations: list) -> bool:
+        session = self.get_session()
+        try:
+            rec = SubredditReadiness(
+                subreddit=subreddit,
+                can_post=can_post,
+                confidence=confidence,
+                reasons=reasons or [],
+                recommendations=recommendations or [],
+                checked_at=datetime.utcnow()
+            )
+            session.add(rec)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存子版块发帖资格失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+
+    def get_latest_subreddit_readiness(self, subreddit: str):
+        session = self.get_session()
+        try:
+            return session.query(SubredditReadiness).filter(SubredditReadiness.subreddit == subreddit).order_by(SubredditReadiness.checked_at.desc()).first()
+        except Exception as e:
+            self.logger.error(f"获取子版块发帖资格失败: {str(e)}")
+            return None
+        finally:
+            session.close()
     
     def get_session(self):
         """获取数据库会话"""
@@ -1107,9 +1306,15 @@ class DatabaseManager:
         """获取最新的业务洞察"""
         session = self.get_session()
         try:
-            return session.query(BusinessInsight).order_by(
+            insight = session.query(BusinessInsight).order_by(
                 BusinessInsight.analysis_timestamp.desc()
             ).first()
+            if insight:
+                self.logger.info(f"找到最新业务洞察: analysis_id={insight.analysis_id}, timestamp={insight.analysis_timestamp}")
+            else:
+                # 使用DEBUG级别，避免在没有深度分析时频繁警告
+                self.logger.debug("数据库中未找到任何业务洞察记录（这是正常的，如果还没有运行过深度分析）")
+            return insight
         except Exception as e:
             self.logger.error(f"获取业务洞察失败: {str(e)}")
             return None
@@ -1132,104 +1337,233 @@ class DatabaseManager:
         finally:
             session.close()
     
-    def upsert_keyword_statistics(self, keywords: List[Tuple[str, float]], category: str = "all"):
+    def get_posts_with_filters(self, 
+                               subreddits: List[str] = None,
+                               min_score: int = None,
+                               max_score: int = None,
+                               keywords: List[str] = None,
+                               limit: int = 1000):
         """
-        更新或插入关键词统计（去重）
+        获取帖子数据（支持多条件筛选）
         
         Args:
-            keywords: [(keyword, score), ...] 关键词和得分列表
-            category: 关键词类别
+            subreddits: 子版块列表（多选）
+            min_score: 最低分数
+            max_score: 最高分数（0表示不限制）
+            keywords: 关键词列表（在标题和内容中搜索）
+            limit: 结果数量限制
+            
+        Returns:
+            符合条件的帖子列表
         """
         session = self.get_session()
         try:
-            for keyword, score in keywords:
-                # 查询是否已存在
-                existing = session.query(KeywordStatistic).filter(
-                    KeywordStatistic.keyword == keyword,
-                    KeywordStatistic.category == category
-                ).first()
+            from sqlalchemy import or_, text
+            
+            query = session.query(RedditPost)
+            
+            # 子版块筛选
+            if subreddits:
+                query = query.filter(RedditPost.subreddit.in_(subreddits))
+            
+            # 分数范围筛选
+            if min_score is not None and min_score > 0:
+                query = query.filter(RedditPost.score >= min_score)
+            if max_score is not None and max_score > 0:
+                query = query.filter(RedditPost.score <= max_score)
+            
+            # 关键词筛选（在标题或内容中搜索）
+            if keywords:
+                valid_keywords = []
                 
-                if existing:
-                    # 更新频率和得分
-                    existing.frequency += 1
-                    existing.tfidf_score = max(existing.tfidf_score, score)
-                    existing.last_seen = datetime.utcnow()
-                else:
-                    # 创建新记录
-                    new_stat = KeywordStatistic(
-                        keyword=keyword,
-                        category=category,
-                        frequency=1,
-                        tfidf_score=score,
-                        first_seen=datetime.utcnow(),
-                        last_seen=datetime.utcnow()
-                    )
-                    session.add(new_stat)
+                # 清理和验证关键词
+                for keyword in keywords:
+                    if keyword:
+                        keyword_clean = keyword.strip()
+                        if keyword_clean:
+                            valid_keywords.append(keyword_clean)
+                
+                if valid_keywords:
+                    # 构建OR条件：多个关键词之间是OR关系
+                    if len(valid_keywords) == 1:
+                        keyword_clean = valid_keywords[0]
+                        keyword_condition = (
+                            RedditPost.title.contains(keyword_clean) |
+                            RedditPost.selftext.contains(keyword_clean)
+                        )
+                        query = query.filter(keyword_condition)
+                    else:
+                        # 多个关键词，使用OR组合
+                        keyword_conditions = []
+                        for keyword_clean in valid_keywords:
+                            keyword_condition = (
+                                RedditPost.title.contains(keyword_clean) |
+                                RedditPost.selftext.contains(keyword_clean)
+                            )
+                            keyword_conditions.append(keyword_condition)
+                        
+                        combined_condition = or_(*keyword_conditions)
+                        query = query.filter(combined_condition)
             
-            session.commit()
-            self.logger.info(f"成功更新关键词统计: {category} - {len(keywords)}个关键词")
-            return True
+            # 按分数降序排列
+            posts = query.order_by(RedditPost.score.desc()).limit(limit).all()
             
-        except Exception as e:
-            session.rollback()
-            self.logger.error(f"更新关键词统计失败: {str(e)}")
-            return False
-        finally:
-            session.close()
-    
-    def get_top_keywords(self, category: str = "all", limit: int = 50, order_by: str = "frequency"):
-        """
-        获取高频关键词
-        
-        Args:
-            category: 类别筛选
-            limit: 返回数量
-            order_by: 排序方式 (frequency 或 tfidf_score)
-        """
-        session = self.get_session()
-        try:
-            query = session.query(KeywordStatistic)
-            
-            if category:
-                query = query.filter(KeywordStatistic.category == category)
-            
-            if order_by == "frequency":
-                query = query.order_by(KeywordStatistic.frequency.desc())
-            else:
-                query = query.order_by(KeywordStatistic.tfidf_score.desc())
-            
-            stats = query.limit(limit).all()
-            
-            result = []
-            for stat in stats:
-                result.append({
-                    'keyword': stat.keyword,
-                    'category': stat.category,
-                    'frequency': stat.frequency,
-                    'tfidf_score': stat.tfidf_score,
-                    'first_seen': stat.first_seen,
-                    'last_seen': stat.last_seen
-                })
-            
-            return result
+            self.logger.info(f"筛选查询完成，找到 {len(posts)} 条符合条件的帖子")
+            return posts
             
         except Exception as e:
-            self.logger.error(f"获取高频关键词失败: {str(e)}")
+            self.logger.error(f"筛选查询失败: {str(e)}")
             return []
         finally:
             session.close()
     
-    def clear_keyword_statistics(self):
-        """清空关键词统计"""
+    def get_comments_by_post_id(self, post_id: str):
+        """从本地数据库获取指定帖子的评论"""
         session = self.get_session()
         try:
-            session.query(KeywordStatistic).delete()
+            comments = session.query(RedditComment).filter(
+                RedditComment.post_id == post_id
+            ).order_by(RedditComment.score.desc()).all()
+            
+            self.logger.info(f"从数据库获取帖子 {post_id} 的 {len(comments)} 条评论")
+            return comments
+            
+        except Exception as e:
+            self.logger.error(f"获取评论失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def get_post_by_id(self, post_id: str):
+        """根据ID获取单个帖子的完整信息"""
+        session = self.get_session()
+        try:
+            post = session.query(RedditPost).filter(RedditPost.id == post_id).first()
+            return post
+        except Exception as e:
+            self.logger.error(f"获取帖子失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def save_subreddit_index(self, subreddit_name: str, description: str = None, 
+                             subscriber_count: int = 0, public_description: str = None,
+                             avg_vector: List[float] = None, keywords: List[str] = None,
+                             main_topics: List[str] = None, posts_data: List[Dict] = None,
+                             indexed_at: datetime = None):
+        """保存或更新子版块索引"""
+        session = self.get_session()
+        try:
+            # 检查是否已存在
+            existing = session.query(SubredditIndex).filter(
+                SubredditIndex.subreddit_name == subreddit_name
+            ).first()
+            
+            if existing:
+                # 更新现有记录
+                if description is not None:
+                    existing.description = description
+                if public_description is not None:
+                    existing.public_description = public_description
+                if subscriber_count > 0:
+                    existing.subscriber_count = subscriber_count
+                if avg_vector:
+                    existing.avg_vector = avg_vector
+                if keywords:
+                    existing.keywords = keywords
+                if main_topics:
+                    existing.main_topics = main_topics
+                if posts_data:
+                    existing.posts_data = posts_data
+                if indexed_at:
+                    existing.indexed_at = indexed_at
+                existing.last_updated = datetime.utcnow()
+            else:
+                # 创建新记录
+                new_index = SubredditIndex(
+                    subreddit_name=subreddit_name,
+                    description=description or '',
+                    public_description=public_description or '',
+                    subscriber_count=subscriber_count,
+                    avg_vector=avg_vector or [],
+                    keywords=keywords or [],
+                    main_topics=main_topics or [],
+                    posts_data=posts_data or [],
+                    indexed_at=indexed_at or datetime.utcnow()
+                )
+                session.add(new_index)
+            
             session.commit()
-            self.logger.info("关键词统计已清空")
+            self.logger.info(f"子版块索引保存成功: r/{subreddit_name}")
             return True
+            
         except Exception as e:
             session.rollback()
-            self.logger.error(f"清空关键词统计失败: {str(e)}")
+            self.logger.error(f"保存子版块索引失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_subreddit_index(self, subreddit_name: str):
+        """获取子版块索引"""
+        session = self.get_session()
+        try:
+            index = session.query(SubredditIndex).filter(
+                SubredditIndex.subreddit_name == subreddit_name
+            ).first()
+            
+            if index:
+                return {
+                    'subreddit_name': index.subreddit_name,
+                    'title': index.title,
+                    'description': index.description,
+                    'public_description': index.public_description,
+                    'subscriber_count': index.subscriber_count,
+                    'avg_vector': index.avg_vector,
+                    'keywords': index.keywords,
+                    'main_topics': index.main_topics,
+                    'posts_data': index.posts_data,
+                    'indexed_at': index.indexed_at,
+                    'last_updated': index.last_updated
+                }
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"获取子版块索引失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_all_subreddit_indices(self):
+        """获取所有子版块索引"""
+        session = self.get_session()
+        try:
+            indices = session.query(SubredditIndex).all()
+            return [self.get_subreddit_index(idx.subreddit_name) for idx in indices]
+        except Exception as e:
+            self.logger.error(f"获取所有子版块索引失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def delete_subreddit_index(self, subreddit_name: str):
+        """删除子版块索引"""
+        session = self.get_session()
+        try:
+            index = session.query(SubredditIndex).filter(
+                SubredditIndex.subreddit_name == subreddit_name
+            ).first()
+            
+            if index:
+                session.delete(index)
+                session.commit()
+                self.logger.info(f"子版块索引删除成功: r/{subreddit_name}")
+                return True
+            return False
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"删除子版块索引失败: {str(e)}")
             return False
         finally:
             session.close()

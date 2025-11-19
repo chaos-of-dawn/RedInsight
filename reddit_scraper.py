@@ -553,4 +553,797 @@ class RedditScraper:
         except Exception as e:
             self.logger.error(f"获取 r/{subreddit_name} 信息失败: {str(e)}")
             return {}
+    
+    def submit_post(self, subreddit_name: str, title: str, content: str = None, 
+                   url: str = None, flair_text: str = None, kind: str = 'self') -> Dict[str, Any]:
+        """
+        发布帖子到指定子版块
+        
+        Args:
+            subreddit_name: 子版块名称
+            title: 帖子标题
+            content: 帖子内容（文本帖子）
+            url: 链接URL（链接帖子）
+            flair_text: 标签文本
+            kind: 帖子类型 ('self' 或 'link')
+            
+        Returns:
+            发布结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            
+            # 根据类型发布帖子
+            if kind == 'self' and content:
+                submission = subreddit.submit(
+                    title=title,
+                    selftext=content,
+                    flair_text=flair_text
+                )
+            elif kind == 'link' and url:
+                submission = subreddit.submit(
+                    title=title,
+                    url=url,
+                    flair_text=flair_text
+                )
+            else:
+                raise ValueError("无效的帖子类型或缺少必要参数")
+            
+            result = {
+                'success': True,
+                'post_id': submission.id,
+                'title': submission.title,
+                'url': f"https://www.reddit.com{submission.permalink}",
+                'subreddit': subreddit_name,
+                'created_utc': datetime.fromtimestamp(submission.created_utc)
+            }
+            
+            self.logger.info(f"成功发布帖子到 r/{subreddit_name}: {submission.id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"发布帖子到 r/{subreddit_name} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def reply_to_comment(self, comment_id: str, text: str) -> Dict[str, Any]:
+        """
+        回复评论
+        
+        Args:
+            comment_id: 评论ID
+            text: 回复内容
+            
+        Returns:
+            回复结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            comment = self.reddit.comment(id=comment_id)
+            reply = comment.reply(text)
+            
+            result = {
+                'success': True,
+                'reply_id': reply.id,
+                'parent_id': comment_id,
+                'text': text,
+                'created_utc': datetime.fromtimestamp(reply.created_utc)
+            }
+            
+            self.logger.info(f"成功回复评论 {comment_id}: {reply.id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"回复评论 {comment_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def reply_to_post(self, post_id: str, text: str) -> Dict[str, Any]:
+        """
+        回复帖子（顶级评论）
+        
+        Args:
+            post_id: 帖子ID
+            text: 回复内容
+            
+        Returns:
+            回复结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            submission = self.reddit.submission(id=post_id)
+            comment = submission.reply(text)
+            
+            result = {
+                'success': True,
+                'comment_id': comment.id,
+                'post_id': post_id,
+                'text': text,
+                'created_utc': datetime.fromtimestamp(comment.created_utc)
+            }
+            
+            self.logger.info(f"成功回复帖子 {post_id}: {comment.id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"回复帖子 {post_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_subreddit_rules(self, subreddit_name: str) -> List[Dict[str, Any]]:
+        """
+        获取子版块规则
+        
+        Args:
+            subreddit_name: 子版块名称
+            
+        Returns:
+            规则列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            rules = []
+            
+            for rule in subreddit.rules:
+                rules.append({
+                    'short_name': rule.short_name,
+                    'description': rule.description,
+                    'kind': rule.kind,
+                    'created_utc': rule.created_utc,
+                    'priority': rule.priority
+                })
+            
+            self.logger.info(f"成功获取 r/{subreddit_name} 的 {len(rules)} 条规则")
+            return rules
+            
+        except Exception as e:
+            self.logger.error(f"获取 r/{subreddit_name} 规则失败: {str(e)}")
+            return []
+
+    def get_subreddit_rules_text(self, subreddit_name: str) -> str:
+        """获取子版块规则的合并文本（便于启发式解析）。"""
+        try:
+            rules = self.get_subreddit_rules(subreddit_name)
+            if not rules:
+                return ""
+            parts = []
+            for r in rules:
+                title = r.get('short_name') or r.get('name') or ''
+                desc = r.get('description') or ''
+                parts.append(f"{title}: {desc}")
+            return "\n".join(parts)
+        except Exception as e:
+            self.logger.error(f"组合 r/{subreddit_name} 规则文本失败: {str(e)}")
+            return ""
+
+    def get_subreddit_sidebar_text(self, subreddit_name: str) -> str:
+        """获取子版块侧栏/简介文本。"""
+        try:
+            if not self.is_authenticated():
+                # 读取公开信息不一定需要认证，但保持一致性
+                pass
+            subreddit = self.reddit.subreddit(subreddit_name)
+            desc = subreddit.description or ''
+            public_desc = subreddit.public_description or ''
+            return f"{desc}\n{public_desc}"
+        except Exception as e:
+            self.logger.error(f"获取 r/{subreddit_name} 侧栏文本失败: {str(e)}")
+            return ""
+
+    def get_me(self):
+        """获取当前认证用户对象。"""
+        try:
+            if not self.is_authenticated():
+                raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+            # 优先通过PRAW获取
+            try:
+                if hasattr(self, 'reddit') and self.reddit is not None:
+                    user_obj = self.reddit.user.me()
+                    if user_obj is not None:
+                        return user_obj
+            except Exception:
+                pass
+
+            # 退回到HTTP接口获取，构造轻量用户对象以兼容属性访问
+            import requests
+            headers = {
+                'Authorization': f'bearer {self.access_token}',
+                'User-Agent': Config.REDDIT_USER_AGENT
+            }
+            resp = requests.get('https://oauth.reddit.com/api/v1/me', headers=headers, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                # 构造具备属性访问的对象
+                try:
+                    return type('RedditUser', (), {
+                        'name': data.get('name'),
+                        'link_karma': data.get('link_karma', 0),
+                        'comment_karma': data.get('comment_karma', 0),
+                        'created_utc': data.get('created_utc', None)
+                    })()
+                except Exception:
+                    return data
+            return None
+        except Exception as e:
+            self.logger.error(f"获取当前用户失败: {str(e)}")
+            return None
+    
+    def track_subreddit(self, subreddit_name: str, keywords: List[str] = None, 
+                       limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        跟踪子版块的新帖子（用于热帖监控）
+        
+        Args:
+            subreddit_name: 子版块名称
+            keywords: 关键词列表（可选）
+            limit: 获取帖子数量
+            
+        Returns:
+            新帖子列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            posts = []
+            
+            # 获取最新帖子
+            for post in subreddit.new(limit=limit):
+                post_data = {
+                    'id': post.id,
+                    'title': post.title,
+                    'author': str(post.author) if post.author else '[deleted]',
+                    'score': post.score,
+                    'num_comments': post.num_comments,
+                    'created_utc': datetime.fromtimestamp(post.created_utc),
+                    'url': post.url,
+                    'selftext': post.selftext,
+                    'subreddit': subreddit_name,
+                    'flair': post.link_flair_text
+                }
+                
+                # 如果有关键词筛选
+                if keywords:
+                    title_text = f"{post.title} {post.selftext}".lower()
+                    if any(keyword.lower() in title_text for keyword in keywords):
+                        posts.append(post_data)
+                else:
+                    posts.append(post_data)
+            
+            self.logger.info(f"跟踪 r/{subreddit_name} 获取到 {len(posts)} 个新帖子")
+            return posts
+            
+        except Exception as e:
+            self.logger.error(f"跟踪 r/{subreddit_name} 失败: {str(e)}")
+            return []
+    
+    def get_user_posts(self, username: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        获取用户的帖子
+        
+        Args:
+            username: 用户名
+            limit: 获取数量
+            
+        Returns:
+            用户帖子列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            user = self.reddit.redditor(username)
+            posts = []
+            
+            for submission in user.submissions.new(limit=limit):
+                post_data = {
+                    'id': submission.id,
+                    'title': submission.title,
+                    'author': username,
+                    'score': submission.score,
+                    'num_comments': submission.num_comments,
+                    'created_utc': datetime.fromtimestamp(submission.created_utc),
+                    'url': submission.url,
+                    'selftext': submission.selftext,
+                    'subreddit': str(submission.subreddit),
+                    'flair': submission.link_flair_text
+                }
+                posts.append(post_data)
+            
+            self.logger.info(f"获取用户 {username} 的 {len(posts)} 个帖子")
+            return posts
+            
+        except Exception as e:
+            self.logger.error(f"获取用户 {username} 帖子失败: {str(e)}")
+            return []
+    
+    def get_user_comments(self, username: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        获取用户的评论
+        
+        Args:
+            username: 用户名
+            limit: 获取数量
+            
+        Returns:
+            用户评论列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            user = self.reddit.redditor(username)
+            comments = []
+            
+            for comment in user.comments.new(limit=limit):
+                comment_data = {
+                    'id': comment.id,
+                    'post_id': str(comment.submission.id),
+                    'author': username,
+                    'body': comment.body,
+                    'score': comment.score,
+                    'created_utc': datetime.fromtimestamp(comment.created_utc),
+                    'subreddit': str(comment.subreddit),
+                    'parent_id': comment.parent_id
+                }
+                comments.append(comment_data)
+            
+            self.logger.info(f"获取用户 {username} 的 {len(comments)} 个评论")
+            return comments
+            
+        except Exception as e:
+            self.logger.error(f"获取用户 {username} 评论失败: {str(e)}")
+            return []
+
+    # ==================== 互动功能方法 ====================
+    
+    def upvote_post(self, post_id: str) -> Dict[str, Any]:
+        """
+        点赞帖子
+        
+        Args:
+            post_id: 帖子ID
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            submission = self.reddit.submission(id=post_id)
+            submission.upvote()
+            
+            result = {
+                'success': True,
+                'post_id': post_id,
+                'action': 'upvote',
+                'new_score': submission.score,
+                'upvote_ratio': submission.upvote_ratio
+            }
+            
+            self.logger.info(f"成功点赞帖子 {post_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"点赞帖子 {post_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def downvote_post(self, post_id: str) -> Dict[str, Any]:
+        """
+        点踩帖子
+        
+        Args:
+            post_id: 帖子ID
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            submission = self.reddit.submission(id=post_id)
+            submission.downvote()
+            
+            result = {
+                'success': True,
+                'post_id': post_id,
+                'action': 'downvote',
+                'new_score': submission.score,
+                'upvote_ratio': submission.upvote_ratio
+            }
+            
+            self.logger.info(f"成功点踩帖子 {post_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"点踩帖子 {post_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def upvote_comment(self, comment_id: str) -> Dict[str, Any]:
+        """
+        点赞评论
+        
+        Args:
+            comment_id: 评论ID
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            comment = self.reddit.comment(id=comment_id)
+            comment.upvote()
+            
+            result = {
+                'success': True,
+                'comment_id': comment_id,
+                'action': 'upvote',
+                'new_score': comment.score
+            }
+            
+            self.logger.info(f"成功点赞评论 {comment_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"点赞评论 {comment_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def downvote_comment(self, comment_id: str) -> Dict[str, Any]:
+        """
+        点踩评论
+        
+        Args:
+            comment_id: 评论ID
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            comment = self.reddit.comment(id=comment_id)
+            comment.downvote()
+            
+            result = {
+                'success': True,
+                'comment_id': comment_id,
+                'action': 'downvote',
+                'new_score': comment.score
+            }
+            
+            self.logger.info(f"成功点踩评论 {comment_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"点踩评论 {comment_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def save_post(self, post_id: str) -> Dict[str, Any]:
+        """
+        保存帖子
+        
+        Args:
+            post_id: 帖子ID
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            submission = self.reddit.submission(id=post_id)
+            submission.save()
+            
+            result = {
+                'success': True,
+                'post_id': post_id,
+                'action': 'save',
+                'title': submission.title,
+                'subreddit': str(submission.subreddit)
+            }
+            
+            self.logger.info(f"成功保存帖子 {post_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"保存帖子 {post_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def unsave_post(self, post_id: str) -> Dict[str, Any]:
+        """
+        取消保存帖子
+        
+        Args:
+            post_id: 帖子ID
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            submission = self.reddit.submission(id=post_id)
+            submission.unsave()
+            
+            result = {
+                'success': True,
+                'post_id': post_id,
+                'action': 'unsave',
+                'title': submission.title,
+                'subreddit': str(submission.subreddit)
+            }
+            
+            self.logger.info(f"成功取消保存帖子 {post_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"取消保存帖子 {post_id} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def follow_user(self, username: str) -> Dict[str, Any]:
+        """
+        关注用户
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            user = self.reddit.redditor(username)
+            user.friend()  # Reddit API中关注用户的方法是friend()
+            
+            result = {
+                'success': True,
+                'username': username,
+                'action': 'follow',
+                'user_id': user.id if hasattr(user, 'id') else None
+            }
+            
+            self.logger.info(f"成功关注用户 {username}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"关注用户 {username} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def unfollow_user(self, username: str) -> Dict[str, Any]:
+        """
+        取消关注用户
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            user = self.reddit.redditor(username)
+            user.unfriend()  # Reddit API中取消关注用户的方法是unfriend()
+            
+            result = {
+                'success': True,
+                'username': username,
+                'action': 'unfollow'
+            }
+            
+            self.logger.info(f"成功取消关注用户 {username}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"取消关注用户 {username} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def subscribe_subreddit(self, subreddit_name: str) -> Dict[str, Any]:
+        """
+        订阅子版块
+        
+        Args:
+            subreddit_name: 子版块名称
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            subreddit.subscribe()
+            
+            result = {
+                'success': True,
+                'subreddit_name': subreddit_name,
+                'action': 'subscribe',
+                'subscriber_count': subreddit.subscribers
+            }
+            
+            self.logger.info(f"成功订阅子版块 r/{subreddit_name}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"订阅子版块 r/{subreddit_name} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def unsubscribe_subreddit(self, subreddit_name: str) -> Dict[str, Any]:
+        """
+        取消订阅子版块
+        
+        Args:
+            subreddit_name: 子版块名称
+            
+        Returns:
+            操作结果字典
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            subreddit.unsubscribe()
+            
+            result = {
+                'success': True,
+                'subreddit_name': subreddit_name,
+                'action': 'unsubscribe',
+                'subscriber_count': subreddit.subscribers
+            }
+            
+            self.logger.info(f"成功取消订阅子版块 r/{subreddit_name}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"取消订阅子版块 r/{subreddit_name} 失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_saved_posts(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        获取保存的帖子
+        
+        Args:
+            limit: 返回数量限制
+            
+        Returns:
+            保存的帖子列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            saved_posts = []
+            for submission in self.reddit.user.me().saved(limit=limit):
+                saved_posts.append({
+                    'id': submission.id,
+                    'title': submission.title,
+                    'subreddit': str(submission.subreddit),
+                    'score': submission.score,
+                    'num_comments': submission.num_comments,
+                    'url': submission.url,
+                    'permalink': submission.permalink,
+                    'created_utc': datetime.fromtimestamp(submission.created_utc),
+                    'saved_at': datetime.utcnow()  # 本地记录保存时间
+                })
+            
+            self.logger.info(f"获取到 {len(saved_posts)} 个保存的帖子")
+            return saved_posts
+            
+        except Exception as e:
+            self.logger.error(f"获取保存的帖子失败: {str(e)}")
+            return []
+    
+    def get_followed_users(self) -> List[Dict[str, Any]]:
+        """
+        获取关注的用户列表
+        
+        Returns:
+            关注的用户列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            followed_users = []
+            for friend in self.reddit.user.me().friends():
+                followed_users.append({
+                    'username': str(friend),
+                    'user_id': friend.id if hasattr(friend, 'id') else None,
+                    'followed_at': datetime.utcnow()  # 本地记录关注时间
+                })
+            
+            self.logger.info(f"获取到 {len(followed_users)} 个关注的用户")
+            return followed_users
+            
+        except Exception as e:
+            self.logger.error(f"获取关注的用户失败: {str(e)}")
+            return []
+    
+    def get_subscribed_subreddits(self) -> List[Dict[str, Any]]:
+        """
+        获取订阅的子版块列表
+        
+        Returns:
+            订阅的子版块列表
+        """
+        if not self.is_authenticated():
+            raise ValueError("Reddit API未认证。请先完成OAuth2认证流程。")
+        
+        try:
+            subscribed_subreddits = []
+            for subreddit in self.reddit.user.me().subreddits():
+                subscribed_subreddits.append({
+                    'name': str(subreddit),
+                    'title': subreddit.title,
+                    'subscribers': subreddit.subscribers,
+                    'description': subreddit.description,
+                    'subscribed_at': datetime.utcnow()  # 本地记录订阅时间
+                })
+            
+            self.logger.info(f"获取到 {len(subscribed_subreddits)} 个订阅的子版块")
+            return subscribed_subreddits
+            
+        except Exception as e:
+            self.logger.error(f"获取订阅的子版块失败: {str(e)}")
+            return []
+
 

@@ -12,6 +12,32 @@ from database import DatabaseManager
 from llm_analyzer import LLMAnalyzer
 from data_organizer import DataOrganizer
 
+# 缓存装饰器用于优化数据库查询
+# 注意：使用下划线前缀避免对DatabaseManager对象进行哈希
+@st.cache_data(ttl=60)  # 缓存60秒
+def get_cached_analysis_statistics(_db_manager):
+    """获取分析统计信息（带缓存）"""
+    try:
+        return _db_manager.get_analysis_statistics()
+    except Exception as e:
+        return {}
+
+@st.cache_data(ttl=120)  # 缓存2分钟
+def get_cached_subreddit_list(_db_manager):
+    """获取子版块列表（带缓存）"""
+    try:
+        return _db_manager.get_subreddit_list()
+    except Exception as e:
+        return []
+
+@st.cache_data(ttl=120)  # 缓存2分钟
+def get_cached_posts_grouped(_db_manager):
+    """获取分组数据（带缓存）"""
+    try:
+        return _db_manager.get_posts_grouped_by_date_subreddit()
+    except Exception as e:
+        return {}
+
 def create_unique_key(prefix, group_key, suffix=""):
     """创建唯一的key，避免冲突"""
     # 使用group_key的hash值来确保唯一性
@@ -68,9 +94,13 @@ def create_merged_analysis_page():
         help="选择要使用的功能模块"
     )
     
-    # 更新页面选项
+    # 更新页面选项 - 使用条件渲染避免不必要的rerun
     if page_option != st.session_state.page_option:
         st.session_state.page_option = page_option
+        # 清除相关缓存，因为切换页面可能需要新数据
+        get_cached_analysis_statistics.clear()
+        get_cached_subreddit_list.clear()
+        get_cached_posts_grouped.clear()
         st.rerun()
     
     # 在侧边栏显示当前选中的模块
@@ -88,9 +118,9 @@ def show_data_management():
     """显示数据管理功能"""
     st.subheader("🗂️ 数据管理")
     
-    # 数据统计
+    # 数据统计 - 使用缓存
     try:
-        stats = st.session_state.db.get_analysis_statistics()
+        stats = get_cached_analysis_statistics(st.session_state.db)
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
@@ -116,14 +146,18 @@ def show_data_management():
     with col1:
         if st.button("🗑️ 清空所有数据", type="secondary"):
             if st.session_state.db.clear_all_data():
+                # 清除所有缓存
+                get_cached_analysis_statistics.clear()
+                get_cached_subreddit_list.clear()
+                get_cached_posts_grouped.clear()
                 st.success("✅ 所有数据已清空")
                 st.rerun()
             else:
                 st.error("❌ 清空数据失败")
     
     with col2:
-        # 获取子版块列表
-        subreddits_list = st.session_state.db.get_subreddit_list()
+        # 获取子版块列表 - 使用缓存
+        subreddits_list = get_cached_subreddit_list(st.session_state.db)
         if subreddits_list:
             selected_subreddit = st.selectbox("选择子版块", ["全部"] + subreddits_list, key="data_management_subreddit")
         else:
@@ -141,8 +175,8 @@ def show_data_management():
     st.write("按搜索日期和板块名称分组显示数据，支持批量操作")
     
     try:
-        # 获取分组数据
-        grouped_data = st.session_state.db.get_posts_grouped_by_date_subreddit()
+        # 获取分组数据 - 使用缓存
+        grouped_data = get_cached_posts_grouped(st.session_state.db)
         
         if grouped_data:
             # 显示分组列表
@@ -171,6 +205,10 @@ def show_data_management():
                     with col_op4:
                         if st.button("🗑️ 删除分组", key=create_unique_key("delete", group_key), type="secondary"):
                             if st.session_state.db.delete_posts_by_group(date, subreddit):
+                                # 清除相关缓存
+                                get_cached_analysis_statistics.clear()
+                                get_cached_subreddit_list.clear()
+                                get_cached_posts_grouped.clear()
                                 st.success(f"✅ 已删除 {date} r/{subreddit} 的所有数据")
                                 st.rerun()
                             else:
@@ -422,7 +460,7 @@ def show_data_packaging():
         )
         
         # 子版块选择
-        available_subreddits = st.session_state.db.get_subreddit_list()
+        available_subreddits = get_cached_subreddit_list(st.session_state.db)
         selected_subreddits = st.multiselect(
             "选择子版块",
             options=available_subreddits,
@@ -797,7 +835,7 @@ def show_manual_processing():
     
     with col_select1:
         # 按分组选择
-        grouped_data = st.session_state.db.get_posts_grouped_by_date_subreddit()
+        grouped_data = get_cached_posts_grouped(st.session_state.db)
         if grouped_data:
             selected_groups = st.multiselect(
                 "选择数据分组",
@@ -810,7 +848,7 @@ def show_manual_processing():
     
     with col_select2:
         # 按子版块选择
-        available_subreddits = st.session_state.db.get_subreddit_list()
+        available_subreddits = get_cached_subreddit_list(st.session_state.db)
         selected_subreddits = st.multiselect(
             "选择子版块",
             options=available_subreddits,
@@ -983,7 +1021,7 @@ def show_results_display():
     
     # 获取数据统计信息
     try:
-        stats = st.session_state.db.get_analysis_statistics()
+        stats = get_cached_analysis_statistics(st.session_state.db)
         total_posts = stats.get('total_posts', 0)
         total_results = stats.get('total_analysis', 0)
         
@@ -1038,7 +1076,7 @@ def show_results_display():
     
     with col_filter2:
         # 子版块选择
-        available_subreddits = st.session_state.db.get_subreddit_list()
+        available_subreddits = get_cached_subreddit_list(st.session_state.db)
         selected_subreddits = st.multiselect(
             "选择子版块",
             options=available_subreddits,

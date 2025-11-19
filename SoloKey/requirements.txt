@@ -1,0 +1,19 @@
+# 激活码生成系统依赖
+
+# ✅ 好消息：本项目不需要安装任何Python依赖包！
+# 所有功能都使用Python标准库实现：
+# - hashlib, hmac, base64 (加密和编码)
+# - json (数据序列化)
+# - datetime (时间处理)
+# - platform, subprocess, re (系统信息获取)
+
+# 系统要求：
+# - Python 3.6 或更高版本
+# - Windows: 需要 wmic 和 getmac 命令（通常已内置）
+# - Linux: 可能需要安装 dmidecode 和 ip 命令（系统工具，非Python包）
+# - macOS: 使用 system_profiler（系统自带）
+
+# 可选依赖（仅在系统命令不可用时使用）：
+# - Windows: 如果 wmic/getmac 不可用，可安装 pywin32
+# - 跨平台备选: 如果系统命令都不可用，可安装 psutil>=5.9.0
+
