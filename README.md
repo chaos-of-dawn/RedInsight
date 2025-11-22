@@ -10,6 +10,25 @@
 
 ## ⚠️ 重要提示 / Important Notice
 
+### ⚠️ 特别提醒：Reddit API要求 / Special Notice: Reddit API Requirements
+
+**在下载部署本项目前，请确认您的Reddit账号可以申请到Reddit的官方API。**
+
+**Before downloading and deploying this project, please confirm that your Reddit account can apply for Reddit's official API.**
+
+**重要说明 / Important Notes：**
+- 本项目需要Reddit API密钥才能正常使用数据抓取、发帖等功能
+- This project requires Reddit API keys to use data scraping, posting and other features
+- 请确保您的Reddit账号满足Reddit API申请条件
+- Please ensure your Reddit account meets Reddit API application requirements
+- 如果无法申请Reddit API，本项目将无法正常使用核心功能
+- If you cannot apply for Reddit API, this project will not be able to use core features normally
+
+**Reddit API申请地址 / Reddit API Application URL：**  
+https://www.reddit.com/prefs/apps
+
+---
+
 ### 📦 版本说明 / Version Description
 
 
