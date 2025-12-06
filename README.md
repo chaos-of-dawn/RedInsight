@@ -8,136 +8,221 @@
 
 ---
 
-## ⚠️ 重要提示 / Important Notice
+## 📋 项目功能
 
-### ⚠️ 特别提醒：Reddit API要求 / Special Notice: Reddit API Requirements
+RedInsight 是一个基于大模型AI技术的Reddit数据分析平台，提供以下核心功能：
 
-**在下载部署本项目前，请确认您的Reddit账号可以申请到Reddit的官方API。**
+### 🎯 核心功能模块
 
-**Before downloading and deploying this project, please confirm that your Reddit account can apply for Reddit's official API.**
+| 功能模块 | 主要功能 |
+|---------|---------|
+| 🏠 **首页** | 快速统计、功能概览、系统状态监控 |
+| 📥 **数据抓取** | 多维度筛选、批量抓取Reddit数据、本地存储 |
+| 📊 **本地数据管理** | 数据管理、数据整理打包、分析结果展示 |
+| 🎯 **子版块推荐** | 智能需求分析、三层漏斗式筛选、精准推荐、批量索引 |
+| 🔧 **养号控制台** | 账号状态监控、发帖资格检测、养号计划、智能发帖、自动化运营、快速互动、任务管理 |
+| 🔍 **智能筛选** | 多维度筛选、条件组合、统计分析、数据导出 |
+| 🔬 **深度分析** | 六阶段分析、长尾关键词提取、业务洞察、自动报告 |
 
-**重要说明 / Important Notes：**
-- 本项目需要Reddit API密钥才能正常使用数据抓取、发帖等功能
-- This project requires Reddit API keys to use data scraping, posting and other features
-- 请确保您的Reddit账号满足Reddit API申请条件
-- Please ensure your Reddit account meets Reddit API application requirements
-- 如果无法申请Reddit API，本项目将无法正常使用核心功能
-- If you cannot apply for Reddit API, this project will not be able to use core features normally
+### ✨ 主要特性
 
-**Reddit API申请地址 / Reddit API Application URL：**  
-https://www.reddit.com/prefs/apps
-
----
-
-### 📦 版本说明 / Version Description
-
-
-**🔗 夸克网盘下载链接 / Quark Cloud Drive Download Link：** [https://pan.quark.cn/s/2cbfb4c18c47](https://pan.quark.cn/s/2cbfb4c18c47)
-
-**使用说明 / Usage Instructions：**
-- 下载后解压文件 / Extract the downloaded file
-- 双击运行 `一键启动.bat` 即可使用 / Double-click `一键启动.bat` to start
-- 项目需要激活码才能使用 / Activation code required
-
-**🔑 获取激活码 / Get Activation Code：**  
-请联系项目管理员获取激活码 / Please contact the project administrator for activation code  
-**管理员微信号 / Administrator WeChat：`whj7087824`**  
-加好友时请注明：`RedInsight激活` / Please note `RedInsight激活` when adding friend
+- 🤖 **AI智能发帖**：基于深度分析结果，AI自动生成高质量帖子内容
+- 🎯 **智能推荐**：支持中文输入，AI自动翻译并推荐目标子版块
+- 📊 **数据分析**：六阶段深度分析，提取关键词和业务洞察
+- 🔧 **养号管理**：账号状态监控、发帖资格检测、7天养号计划
+- 🤖 **自动化运营**：定时发帖、自动互动、任务调度
+- ⚡ **快速互动**：帖子互动、评论管理、热帖追踪
+- 🔍 **智能筛选**：多维度数据筛选和统计分析
 
 ---
 
-## 📖 本地部署详细步骤 / Detailed Local Deployment Steps
+## ⚠️ 重要提示
 
-### 1. 环境要求 / Requirements
+### 📘 Reddit API申请指南
 
-#### 系统要求 / System Requirements
+**在下载部署本项目前，请先用Reddit账号向官方申请Reddit的官方API。**
+
+#### 为什么需要Reddit API？
+
+本项目需要Reddit API密钥才能正常使用以下核心功能：
+- 数据抓取：从Reddit子版块获取帖子和评论数据
+- 智能发帖：在Reddit上发布帖子
+- 账号管理：查看账号状态、Karma等信息
+- 互动功能：点赞、评论、回复等操作
+
+#### 申请条件
+
+- 拥有一个有效的Reddit账号
+- Reddit账号需要满足一定的使用时长和活跃度要求
+- 建议账号有一定Karma值，提高申请成功率
+
+#### 申请步骤
+
+1. **访问Reddit应用管理页面**
+   - 打开浏览器，访问：https://www.reddit.com/prefs/apps
+   - 确保已登录您的Reddit账号
+
+2. **创建新应用**
+   - 滚动到页面底部，点击 **"create another app"** 或 **"create app"** 按钮
+
+3. **填写应用信息**
+   - **应用名称（name）**：填写任意名称，例如 "RedInsight" 或 "我的Reddit应用"
+   - **应用类型（type）**：选择 **"script"**（脚本类型）
+   - **描述（description）**：可选，填写应用描述
+   - **关于链接（about url）**：留空
+   - **重定向URI（redirect uri）**：填写 `http://localhost:8080`（必须填写此值）
+
+4. **提交并获取密钥**
+   - 点击 **"create app"** 按钮提交
+   - 创建成功后，您会看到应用信息页面
+
+5. **记录密钥信息**
+   - **客户端ID（client_id）**：在应用名称下方，显示为一段字符串（通常在应用名称下方，格式类似：`xxxxxxxxxxxxxx`）
+   - **客户端密钥（client_secret）**：在应用信息中标记为 "secret" 的字段，点击 "reveal"（显示）按钮可查看完整密钥
+
+#### 注意事项
+
+- ⚠️ **请妥善保管您的API密钥**，不要泄露给他人
+- ⚠️ **客户端密钥（client_secret）** 只显示一次，请立即保存
+- ⚠️ **重定向URI（redirect uri）** 必须填写 `http://localhost:8080`，否则OAuth认证会失败
+- ⚠️ 如果申请被拒绝，请检查账号是否符合Reddit的使用政策
+
+#### 常见问题
+
+**Q: 申请被拒绝怎么办？**  
+A: 确保您的Reddit账号活跃，有一定Karma值，并且遵守Reddit社区规则。
+
+**Q: 找不到客户端ID和客户端密钥？**  
+A: 客户端ID在应用名称下方，客户端密钥需要点击"reveal"（显示）按钮才能查看。
+
+**Q: 重定向URI可以填写其他地址吗？**  
+A: 建议使用 `http://localhost:8080`，这是本项目默认配置的重定向地址。
+
+---
+
+### 📦 版本说明
+
+**🔗 夸克网盘下载链接：** [https://pan.quark.cn/s/2cbfb4c18c47](https://pan.quark.cn/s/2cbfb4c18c47)
+
+**使用说明：**
+- 下载后解压文件
+- 双击运行 `一键启动.bat` 即可使用
+- 项目需要激活码才能使用
+
+**🔑 获取激活码：**  
+请联系项目管理员获取激活码  
+**管理员微信号：`whj7087824`**  
+加好友时请注明：`RedInsight激活`
+
+---
+
+## 🚀 部署方式
+
+本项目支持多种部署方式，您可以根据自己的需求选择：
+
+### 部署方式对比
+
+| 部署方式 | 适用场景 | 难度 | 推荐度 |
+|---------|---------|------|--------|
+| 🪟 **一键启动脚本** | Windows用户、快速体验 | ⭐ 简单 | ⭐⭐⭐⭐⭐ |
+| 🐳 **Docker部署** | 生产环境、服务器部署 | ⭐⭐ 中等 | ⭐⭐⭐⭐⭐ |
+| 📦 **手动部署** | 开发环境、自定义配置 | ⭐⭐⭐ 较难 | ⭐⭐⭐ |
+| 🐧 **Linux/Mac脚本** | Linux/macOS用户 | ⭐⭐ 简单 | ⭐⭐⭐⭐ |
+
+### 快速选择
+
+- **Windows用户**：直接使用 `一键启动.bat`（最简单）
+- **Linux/macOS用户**：使用 `install.sh` 脚本
+- **服务器部署**：推荐使用 Docker 部署
+- **开发调试**：使用手动部署方式
+
+---
+
+## 📖 本地部署详细步骤
+
+### 1. 环境要求
+
+#### 系统要求
 - **操作系统**：Windows 10/11、Linux、macOS
-- **Operating System**: Windows 10/11, Linux, macOS
 - **Python版本**：Python 3.8 或更高版本
-- **Python Version**: Python 3.8 or higher
 
-#### 必需软件 / Required Software
+#### 必需软件
 - Python 3.8+（需添加到系统PATH）
-- Python 3.8+ (must be added to system PATH)
 - 网络连接（用于安装依赖和API调用）
-- Network connection (for installing dependencies and API calls)
 
-### 2. 安装步骤 / Installation Steps
+### 2. 安装步骤
 
-#### 步骤 1：克隆项目 / Step 1: Clone the Project
+#### 步骤 1：克隆项目
 
 ```bash
-# 克隆项目 / Clone the project
+# 克隆项目
 git clone https://github.com/chaos-of-dawn/RedInsight.git
 cd RedInsight
 ```
 
-#### 步骤 2：创建虚拟环境 / Step 2: Create Virtual Environment
+#### 步骤 2：创建虚拟环境
 
 **Windows:**
 ```bash
-# 创建虚拟环境 / Create virtual environment
+# 创建虚拟环境
 python -m venv venv
 
-# 激活虚拟环境 / Activate virtual environment
+# 激活虚拟环境
 venv\Scripts\activate
 ```
 
 **Linux/macOS:**
 ```bash
-# 创建虚拟环境 / Create virtual environment
+# 创建虚拟环境
 python3 -m venv venv
 
-# 激活虚拟环境 / Activate virtual environment
+# 激活虚拟环境
 source venv/bin/activate
 ```
 
-#### 步骤 3：安装PyTorch（CPU版本）/ Step 3: Install PyTorch (CPU Version)
+#### 步骤 3：安装PyTorch（CPU版本）
 
 ```bash
-# 安装PyTorch CPU版本 / Install PyTorch CPU version
+# 安装PyTorch CPU版本
 pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
 pip install torchvision==0.16.0+cpu --index-url https://download.pytorch.org/whl/cpu
 ```
 
-> **注意**：PyTorch安装可能需要几分钟时间，请耐心等待  
-> **Note**: PyTorch installation may take several minutes, please be patient
+> **注意**：PyTorch安装可能需要几分钟时间，请耐心等待
 
-#### 步骤 4：安装sentence-transformers依赖（按顺序）/ Step 4: Install sentence-transformers Dependencies (In Order)
+#### 步骤 4：安装sentence-transformers依赖（按顺序）
 
 ```bash
-# 必须按顺序安装，避免依赖冲突 / Must install in order to avoid dependency conflicts
+# 必须按顺序安装，避免依赖冲突
 pip install tokenizers==0.13.2
 pip install huggingface-hub==0.11.1
 pip install transformers==4.21.0
 pip install sentence-transformers==2.2.2
 ```
 
-> **重要**：这些包必须按顺序安装，否则可能出现依赖冲突  
-> **Important**: These packages must be installed in order, otherwise dependency conflicts may occur
+> **重要**：这些包必须按顺序安装，否则可能出现依赖冲突
 
-#### 步骤 5：安装其他依赖 / Step 5: Install Other Dependencies
+#### 步骤 5：安装其他依赖
 
 ```bash
-# 安装项目依赖 / Install project dependencies
+# 安装项目依赖
 pip install -r requirements.txt
 ```
 
-> **提示**：如果安装过程中遇到网络问题，可以使用国内镜像源  
-> **Tip**: If you encounter network issues, you can use domestic mirror sources
+> **提示**：如果安装过程中遇到网络问题，可以使用国内镜像源
 
-**使用国内镜像源（可选）/ Using Domestic Mirror Sources (Optional):**
+**使用国内镜像源（可选）：**
 ```bash
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-### 3. 启动应用 / Start the Application
+### 3. 启动应用
 
-#### 方法一：使用一键启动脚本（推荐）/ Method 1: Use One-Click Launch Script (Recommended)
+#### 方法一：使用一键启动脚本（推荐）
 
 **Windows:**
 ```bash
-# 双击运行 / Double-click to run
+# 双击运行
 一键启动.bat
 ```
 
@@ -148,330 +233,321 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 - 处理激活流程
 - 启动应用
 
-The script will automatically:
-- Check Python environment
-- Create/activate virtual environment
-- Install missing dependencies
-- Handle activation process
-- Start the application
-
-#### 方法二：手动启动 / Method 2: Manual Start
+#### 方法二：手动启动
 
 ```bash
-# 确保虚拟环境已激活 / Ensure virtual environment is activated
+# 确保虚拟环境已激活
 # Windows: venv\Scripts\activate
 # Linux/macOS: source venv/bin/activate
 
-# 启动应用 / Start the application
+# 启动应用
 streamlit run streamlit_app.py
 ```
 
 应用将在浏览器中自动打开，默认地址：http://localhost:8501
 
-The application will automatically open in your browser at: http://localhost:8501
+#### 方法三：使用Docker部署（推荐用于生产环境）
 
-### 4. 配置API密钥 / Configure API Keys
+**前置要求：**
+- 已安装 Docker 和 Docker Compose
+- Docker版本：20.10+
+- Docker Compose版本：1.29+
 
-> **重要提示**：所有API密钥配置都通过Web界面完成，无需手动编辑配置文件  
-> **Important**: All API key configuration is done through the Web interface, no need to manually edit configuration files
+**部署步骤：**
 
-#### 获取Reddit API密钥 / Get Reddit API Keys
+1. **构建并启动容器**
+   ```bash
+   # 使用docker-compose一键部署
+   docker-compose up -d
+   ```
 
-在配置之前，您需要先获取Reddit API密钥：
+2. **查看运行状态**
+   ```bash
+   # 查看容器状态
+   docker-compose ps
+   
+   # 查看日志
+   docker-compose logs -f
+   ```
 
-Before configuration, you need to get Reddit API keys first:
+3. **访问应用**
+   - 浏览器访问：http://localhost:8501
+   - 如果部署在服务器上，将 `localhost` 替换为服务器IP地址
+
+4. **停止服务**
+   ```bash
+   # 停止容器
+   docker-compose down
+   
+   # 停止并删除数据卷（谨慎使用）
+   docker-compose down -v
+   ```
+
+**Docker部署优势：**
+- ✅ 环境隔离，避免依赖冲突
+- ✅ 一键部署，无需手动配置Python环境
+- ✅ 易于扩展和维护
+- ✅ 支持健康检查和自动重启
+
+**注意事项：**
+- Docker部署时，数据会持久化到 `./data`、`./output`、`./logs` 目录
+- 首次部署需要构建镜像，可能需要几分钟时间
+- 确保端口8501未被占用
+
+#### 方法四：Linux/macOS一键安装脚本
+
+**Linux/macOS用户可以使用提供的安装脚本：**
+
+```bash
+# 给脚本添加执行权限
+chmod +x install.sh
+
+# 运行安装脚本
+./install.sh
+```
+
+脚本会自动：
+- 检查Python环境
+- 创建虚拟环境
+- 安装所有依赖
+- 处理激活流程
+- 启动应用
+
+### 4. 配置API密钥
+
+> **重要提示**：所有API密钥配置都通过Web界面完成，无需手动编辑配置文件
+
+#### 获取Reddit API密钥
+
+> **提示**：详细的Reddit API申请指南请参考上方的 [📘 Reddit API申请指南](#-reddit-api申请指南) 部分
+
+在配置之前，您需要先获取Reddit API密钥。简要步骤：
 
 1. 访问 https://www.reddit.com/prefs/apps
-   Visit https://www.reddit.com/prefs/apps
-2. 点击 "create another app" 或 "create app"
-   Click "create another app" or "create app"
-3. 填写应用信息：
-   Fill in application information:
-   - **name**: 应用名称（任意）
-     Application name (any)
-   - **type**: 选择 "script"
-     Select "script"
-   - **description**: 应用描述（可选）
-     Application description (optional)
-   - **about url**: 留空
-     Leave blank
-   - **redirect uri**: 填写 `http://localhost:8080`
-     Fill in `http://localhost:8080`
-4. 创建后，记录以下信息：
-   After creation, record the following information:
-   - **client_id**: 应用ID（在应用名称下方）
-     Application ID (below application name)
-   - **client_secret**: 密钥（secret字段）
-     Secret key (secret field)
+2. 点击页面上的 "create another app" 或 "create app" 按钮
+3. 填写应用信息（应用类型选择"script"，重定向URI填写`http://localhost:8080`）
+4. 创建后记录 **客户端ID（client_id）** 和 **客户端密钥（client_secret）**
 
-#### 获取大模型API密钥 / Get LLM API Keys
+#### 获取大模型API密钥
 
 - **OpenAI**: 访问 https://platform.openai.com/api-keys
-  Visit https://platform.openai.com/api-keys
 - **Anthropic**: 访问 https://console.anthropic.com/
-  Visit https://console.anthropic.com/
 - **DeepSeek**: 访问 https://platform.deepseek.com/
-  Visit https://platform.deepseek.com/
 
-#### 在Web界面中配置 / Configure in Web Interface
+#### 在Web界面中配置
 
 启动应用后，在左侧边栏的 **"🔧 API配置"** 部分配置API密钥：
 
-After starting the application, configure API keys in the **"🔧 API配置"** section in the left sidebar:
-
 1. **Reddit API配置**（必需）
-   **Reddit API Configuration** (Required)
-   - 输入 Client ID
-     Enter Client ID
-   - 输入 Client Secret
-     Enter Client Secret
+   - 输入客户端ID
+   - 输入客户端密钥
    - 设置重定向URI（默认：`http://localhost:8080`）
-     Set redirect URI (default: `http://localhost:8080`)
    - 点击 "开始Reddit认证" 完成OAuth2认证
-     Click "开始Reddit认证" to complete OAuth2 authentication
 
 2. **AI API配置**（至少配置一个）
-   **AI API Configuration** (At least one required)
-   - OpenAI API Key（可选）
-     OpenAI API Key (Optional)
-   - Anthropic API Key（可选）
-     Anthropic API Key (Optional)
-   - DeepSeek API Key（可选）
-     DeepSeek API Key (Optional)
+   - OpenAI API密钥（可选）
+   - Anthropic API密钥（可选）
+   - DeepSeek API密钥（可选）
 
 3. **保存配置**
-   **Save Configuration**
    - 点击 "💾 保存配置" 按钮
-     Click "💾 保存配置" button
    - 配置会自动保存到 `api_keys.json` 文件
-     Configuration will be automatically saved to `api_keys.json` file
 
 4. **初始化系统**
-   **Initialize System**
    - 配置完成后，点击 "🚀 初始化系统" 按钮
-     After configuration, click "🚀 初始化系统" button
    - 系统会自动验证配置并初始化组件
-     System will automatically verify configuration and initialize components
 
-### 5. 首次使用 / First Time Use
+### 5. 首次使用
 
-#### 激活项目 / Activate the Project
+#### 激活项目
 
-1. 首次运行需要激活 / Activation required on first run
-2. 按照提示输入邮箱 / Enter your email as prompted
-3. 联系项目管理员获取激活码 / Contact project administrator for activation code
-4. 输入激活码完成激活 / Enter activation code to complete activation
+1. 首次运行需要激活
+2. 按照提示输入邮箱
+3. 联系项目管理员获取激活码
+4. 输入激活码完成激活
 
-**项目管理员联系方式 / Project Administrator Contact:**
-- **微信 / WeChat**: `whj7087824`
-- **加好友时请注明 / Please note when adding friend**: `RedInsight激活`
+**项目管理员联系方式：**
+- **微信**：`whj7087824`
+- **加好友时请注明**：`RedInsight激活`
 
 ---
 
 **RedInsight** 是一个基于大模型AI技术的Reddit数据分析平台，帮助用户从Reddit数据中挖掘商业价值，生成高质量内容，并智能管理Reddit账号。通过AI技术实现从需求分析到内容发布到互动反馈的完整闭环。
 
-**RedInsight** is a Reddit data analysis platform based on large language model AI technology, helping users extract business value from Reddit data, generate high-quality content, and intelligently manage Reddit accounts. It achieves a complete closed loop from demand analysis to content publishing to interaction feedback through AI technology.
+## ✨ 核心特性
 
-## ✨ 核心特性 / Core Features
-
-### 🎯 智能子版块推荐 / Intelligent Subreddit Recommendation
+### 🎯 智能子版块推荐
 - **需求分析**：支持中文输入，AI自动翻译并分析用户意图
-- **Demand Analysis**: Supports Chinese input, AI automatically translates and analyzes user intent
 - **三层漏斗式筛选**：高度匹配(85-100分) → 中度匹配(70-84分) → 低度匹配(60-69分)
-- **Three-Tier Funnel Filtering**: High match (85-100) → Medium match (70-84) → Low match (60-69)
 - **精准推荐**：基于向量相似度匹配，精准定位目标子版块
-- **Precise Recommendation**: Based on vector similarity matching, precisely locate target subreddits
 - **批量索引**：一键索引多个推荐子版块，快速建立数据基础
-- **Batch Indexing**: One-click indexing of multiple recommended subreddits, quickly establish data foundation
 
-### 🔧 Reddit养号控制台 / Reddit Account Management Console
+### 🔧 Reddit养号控制台
 - **账号状态监控**：实时显示账号Karma、账号年龄、今日任务等关键指标
-- **Account Status Monitoring**: Real-time display of account Karma, account age, daily tasks and other key metrics
 - **发帖资格检测**：智能评估账号在目标子版块的发帖资格，生成个性化养号建议
-- **Posting Eligibility Detection**: Intelligently evaluate account posting eligibility in target subreddits, generate personalized account nurturing suggestions
 - **7天养号计划**：自动生成科学的养号计划，包括点赞、评论、发帖任务
-- **7-Day Account Nurturing Plan**: Automatically generate scientific account nurturing plans, including likes, comments, and posting tasks
 - **互动历史统计**：记录所有互动操作，统计成功率和互动趋势
-- **Interaction History Statistics**: Record all interaction operations, statistics on success rate and interaction trends
 
-### 📝 AI智能发帖系统 / AI Intelligent Posting System
+### 📝 AI智能发帖系统
 - **五步骤智能流程**：
   1. **子版块选择** - 从推荐/手动/已索引/数据库中选择
   2. **详情查看** - 查看订阅数、描述、关键词、热门帖子
   3. **规则提示** - 自动获取并翻译子版块规则为中文
   4. **内容生成** - AI基于深度分析结果、关键词、长尾词和规则生成内容
   5. **预览发布** - 预览、验证、保存草稿或直接发布
-- **Five-Step Intelligent Process**:
-  1. **Subreddit Selection** - Select from recommendations/manual/indexed/database
-  2. **Details View** - View subscribers, description, keywords, hot posts
-  3. **Rules Prompt** - Automatically fetch and translate subreddit rules to Chinese
-  4. **Content Generation** - AI generates content based on deep analysis results, keywords, long-tail keywords and rules
-  5. **Preview & Publish** - Preview, verify, save draft or publish directly
   
 - **AI内容生成**：基于深度分析结果、长尾关键词和子版块规则生成高质量帖子
-- **AI Content Generation**: Generate high-quality posts based on deep analysis results, long-tail keywords and subreddit rules
 - **规则智能适配**：自动获取并翻译子版块规则，确保内容合规
-- **Intelligent Rule Adaptation**: Automatically fetch and translate subreddit rules to ensure content compliance
 - **多语言支持**：中文输入自动翻译为英文，支持本地化内容
-- **Multi-language Support**: Chinese input automatically translated to English, supports localized content
 - **重新生成功能**：支持不满意内容一键重新生成
-- **Regeneration Function**: Supports one-click regeneration of unsatisfactory content
 
-### 🔬 深度数据分析 / Deep Data Analysis
-- **六阶段分析流程**：结构化抽取 → 向量化 → 聚类 → 洞察生成 → 关键词提取 → 报告导出
-- **Six-Stage Analysis Process**: Structured extraction → Vectorization → Clustering → Insight generation → Keyword extraction → Report export
-- **长尾关键词提取**：TF-IDF + 大模型混合策略，提取精准短语（如"iPhone battery replacement"）
-- **Long-tail Keyword Extraction**: TF-IDF + LLM hybrid strategy, extract precise phrases (e.g., "iPhone battery replacement")
-- **业务洞察生成**：从海量数据中提取主导主题、主要痛点、关键机会
-- **Business Insight Generation**: Extract dominant themes, main pain points, and key opportunities from massive data
-- **自动报告生成**：导出包含高频词、长尾词、主题分析的完整JSON/TXT报告
-- **Automatic Report Generation**: Export complete JSON/TXT reports including high-frequency words, long-tail keywords, and theme analysis
+### 🤖 自动化运营
+- **自动化任务管理**：设置自动化任务，包括定时发帖、自动互动等
+- **任务调度**：灵活配置任务执行时间和频率
+- **执行监控**：实时监控自动化任务执行状态和结果
 
-### 📚 快速互动管理 / Quick Interaction Management
+### ⚡ 快速互动
 - **帖子互动**：快速点赞、点踩、保存、回复、查看评论
-- **Post Interaction**: Quick like, dislike, save, reply, view comments
 - **子版块浏览与翻译**：浏览热门帖子，一键翻译为中文，查看评论并进行互动
-- **Subreddit Browsing & Translation**: Browse hot posts, one-click translation to Chinese, view comments and interact
 - **评论管理**：查看帖子评论，点赞/点踩评论，快速回复
-- **Comment Management**: View post comments, like/dislike comments, quick reply
 - **热帖追踪**：实时追踪热门帖子，获取最新社区动态
-- **Hot Post Tracking**: Real-time tracking of hot posts, get latest community trends
 
-### 🔍 数据抓取与存储 / Data Scraping & Storage
+### 📋 任务管理
+- **任务创建**：创建和管理养号任务、发帖任务等
+- **任务跟踪**：跟踪任务执行进度和完成状态
+- **任务历史**：查看历史任务记录和统计信息
+
+### 🔬 深度数据分析
+- **六阶段分析流程**：结构化抽取 → 向量化 → 聚类 → 洞察生成 → 关键词提取 → 报告导出
+- **长尾关键词提取**：TF-IDF + 大模型混合策略，提取精准短语（如"iPhone battery replacement"）
+- **业务洞察生成**：从海量数据中提取主导主题、主要痛点、关键机会
+- **自动报告生成**：导出包含高频词、长尾词、主题分析的完整JSON/TXT报告
+
+### 🔍 数据抓取与存储
 - **灵活抓取**：支持按时间、分数、关键词等多维度筛选
-- **Flexible Scraping**: Supports multi-dimensional filtering by time, score, keywords, etc.
+- **批量抓取**：支持批量抓取多个子版块的数据
 - **本地存储**：使用SQLAlchemy和SQLite存储结构化数据
-- **Local Storage**: Use SQLAlchemy and SQLite to store structured data
 - **数据管理**：完整的本地数据管理和查询功能
-- **Data Management**: Complete local data management and query functions
 
-## 🛠️ 技术栈 / Tech Stack
+### 📊 本地数据管理
+- **数据管理**：查看、编辑、删除本地数据库中的帖子和评论
+- **数据整理打包**：将数据按子版块、时间等维度整理打包
+- **结果展示**：查看分析结果、关键词统计、业务洞察等
 
-- **前端框架 / Frontend Framework**: Streamlit (Web界面 / Web Interface)
-- **后端语言 / Backend Language**: Python 3.8+
-- **数据抓取 / Data Scraping**: PRAW (Reddit API)
-- **AI模型 / AI Models**: OpenAI GPT、Anthropic Claude、DeepSeek
-- **向量化 / Vectorization**: sentence-transformers
-- **数据库 / Database**: SQLAlchemy + SQLite
-- **关键词提取 / Keyword Extraction**: TF-IDF + 大模型混合策略 / TF-IDF + LLM Hybrid Strategy
+### 🔍 智能筛选
+- **多维度筛选**：基于本地数据库数据进行精准筛选和统计分析
+- **条件组合**：支持按子版块、时间范围、关键词、分数等多条件组合筛选
+- **统计分析**：对筛选结果进行统计分析，生成数据报告
+- **数据导出**：将筛选和分析结果导出为JSON/TXT格式
 
-## 📊 功能模块 / Feature Modules
+## 🛠️ 技术栈
 
-| 模块 / Module | 功能 / Features |
+- **前端框架**：Streamlit (Web界面)
+- **后端语言**：Python 3.8+
+- **数据抓取**：PRAW (Reddit API)
+- **AI模型**：OpenAI GPT、Anthropic Claude、DeepSeek
+- **向量化**：sentence-transformers
+- **数据库**：SQLAlchemy + SQLite
+- **关键词提取**：TF-IDF + 大模型混合策略
+
+## 📊 功能模块
+
+| 模块 | 功能 |
 |------|------|
-| 🎯 **子版块推荐 / Subreddit Recommendation** | 智能需求分析、三层漏斗式筛选、精准推荐、批量索引 / Intelligent demand analysis, three-tier funnel filtering, precise recommendation, batch indexing |
-| 🔧 **养号控制台 / Account Management Console** | 账号状态监控、发帖资格检测、养号计划、互动管理 / Account status monitoring, posting eligibility detection, account nurturing plan, interaction management |
-| 📝 **智能发帖 / Intelligent Posting** | 5步智能流程、AI内容生成、规则适配、多语言支持 / 5-step intelligent process, AI content generation, rule adaptation, multi-language support |
-| 🔬 **深度分析 / Deep Analysis** | 六阶段分析、长尾关键词提取、业务洞察、自动报告 / Six-stage analysis, long-tail keyword extraction, business insights, automatic reports |
-| 📚 **互动管理 / Interaction Management** | 帖子互动、浏览翻译、评论管理、热帖追踪 / Post interaction, browse translation, comment management, hot post tracking |
-| 🔍 **数据抓取 / Data Scraping** | 多维度筛选、批量抓取、本地存储、数据管理 / Multi-dimensional filtering, batch scraping, local storage, data management |
+| 🏠 **首页** | 快速统计、功能概览、系统状态 |
+| 📥 **数据抓取** | 多维度筛选、批量抓取、本地存储 |
+| 📊 **本地数据管理** | 数据管理、数据整理打包、结果展示 |
+| 🎯 **子版块推荐** | 智能需求分析、三层漏斗式筛选、精准推荐、批量索引 |
+| 🔧 **养号控制台** | 账号状态监控、发帖资格检测、养号计划、智能发帖、自动化运营、快速互动、任务管理 |
+| 🔍 **智能筛选** | 多维度筛选、条件组合、统计分析、数据导出 |
+| 🔬 **深度分析** | 六阶段分析、长尾关键词提取、业务洞察、自动报告 |
 
-## 🎯 适用场景 / Use Cases
+## 🎯 适用场景
 
 - **Reddit养号**：新账号养号、账号状态监控、养号计划生成
-- **Reddit Account Nurturing**: New account nurturing, account status monitoring, account nurturing plan generation
 - **Reddit数据分析**：子版块分析、用户需求挖掘、趋势洞察
-- **Reddit Data Analysis**: Subreddit analysis, user demand mining, trend insights
 - **AI大模型发帖**：基于数据分析生成高质量内容，自动适配子版块规则
-- **AI LLM Posting**: Generate high-quality content based on data analysis, automatically adapt to subreddit rules
 - **Reddit热帖追踪**：实时追踪热门帖子，获取最新社区动态
-- **Reddit Hot Post Tracking**: Real-time tracking of hot posts, get latest community trends
+- **自动化运营**：设置自动化任务，提高运营效率
 
-## 🚀 快速开始 / Quick Start
+## 🚀 快速开始
 
-### 使用步骤 / Usage Steps
+### 使用步骤
 
-1. **下载完整版 / Download Full Version**  
-   从夸克网盘下载完整版项目压缩包：[下载链接](https://pan.quark.cn/s/2cbfb4c18c47)  
-   Download the full version project package from Quark Cloud Drive: [Download Link](https://pan.quark.cn/s/2cbfb4c18c47)
+1. **下载完整版**  
+   从夸克网盘下载完整版项目压缩包：[下载链接](https://pan.quark.cn/s/2cbfb4c18c47)
 
-2. **解压文件 / Extract Files**  
-   将下载的压缩包解压到本地目录  
-   Extract the downloaded package to a local directory
+2. **解压文件**  
+   将下载的压缩包解压到本地目录
 
-3. **启动应用 / Start Application**  
-   双击运行 `一键启动.bat` 文件即可启动应用  
-   Double-click `一键启动.bat` to start the application
+3. **启动应用**  
+   双击运行 `一键启动.bat` 文件即可启动应用
 
-4. **激活项目 / Activate Project**  
-   - 首次运行需要激活 / Activation required on first run
-   - 按照提示输入邮箱并获取激活码 / Enter email as prompted and get activation code
-   - 联系项目管理员获取激活码：**微信号 `whj7087824`** / Contact project administrator for activation code: **WeChat `whj7087824`**
+4. **激活项目**  
+   - 首次运行需要激活
+   - 按照提示输入邮箱并获取激活码
+   - 联系项目管理员获取激活码：**微信号 `whj7087824`**
 
-## 📖 使用流程 / Usage Workflow
+## 📖 使用流程
 
-### 完整工作流程 / Complete Workflow
+### 完整工作流程
 
 1. **需求分析** → 输入中文需求，AI分析并推荐目标子版块
-   **Demand Analysis** → Enter Chinese demand, AI analyzes and recommends target subreddits
 2. **批量索引** → 选择推荐子版块进行批量数据抓取
-   **Batch Indexing** → Select recommended subreddits for batch data scraping
 3. **深度分析** → 运行六阶段深度分析，提取关键词和业务洞察
-   **Deep Analysis** → Run six-stage deep analysis, extract keywords and business insights
 4. **账号检测** → 检测账号发帖资格，生成养号计划（如需要）
-   **Account Detection** → Detect account posting eligibility, generate account nurturing plan (if needed)
 5. **智能发帖** → 基于分析结果生成高质量帖子内容
-   **Intelligent Posting** → Generate high-quality post content based on analysis results
 6. **互动管理** → 进行帖子互动，追踪热帖，管理账号
-   **Interaction Management** → Interact with posts, track hot posts, manage accounts
+7. **自动化运营** → 设置自动化任务，提高运营效率
 
-### 核心功能演示 / Core Feature Demo
+### 核心功能演示
 
-#### 🔧 Reddit养号控制台 / Reddit Account Management Console
+#### 🔧 Reddit养号控制台
 - 查看账号状态（Karma、账号年龄）
-- View account status (Karma, account age)
 - 检测目标子版块发帖资格
-- Detect target subreddit posting eligibility
 - 生成7天养号计划
-- Generate 7-day account nurturing plan
 - 跟踪养号进度和互动历史
-- Track account nurturing progress and interaction history
+- 智能发帖、自动化运营、快速互动、任务管理
 
-#### 📝 智能发帖流程 / Intelligent Posting Process
+#### 📝 智能发帖流程
 1. 选择子版块 → 2. 查看详情 → 3. 规则提示（自动翻译） → 4. 生成内容 → 5. 预览发布
-1. Select subreddit → 2. View details → 3. Rules prompt (auto-translate) → 4. Generate content → 5. Preview & publish
 
-#### 🎯 子版块推荐 / Subreddit Recommendation
+#### 🎯 子版块推荐
 - 中文需求输入 → AI翻译分析 → 三层漏斗筛选 → 精准推荐 → 批量索引
-- Chinese demand input → AI translation analysis → Three-tier funnel filtering → Precise recommendation → Batch indexing
 
-## 📸 功能截图 / Screenshots
+#### 🔍 智能筛选
+- 设置筛选条件 → 执行筛选 → 查看统计结果 → 导出数据报告
 
-> 注：本项目提供Web界面（Streamlit），界面友好，操作便捷。  
-> Note: This project provides a Web interface (Streamlit), user-friendly and easy to operate.
+## 📸 功能截图
 
-## 🤝 贡献 / Contributing
+> 注：本项目提供Web界面（Streamlit），界面友好，操作便捷。
 
-欢迎提交Issue和Pull Request来改进这个项目！
+## 🤝 贡献
 
-Welcome to submit Issues and Pull Requests to improve this project!
+欢迎提交问题反馈和代码贡献来改进这个项目！
 
-### 贡献方向 / Contribution Directions
-- 功能增强 / Feature Enhancement
-- Bug修复 / Bug Fixes
-- 文档完善 / Documentation Improvement
-- 性能优化 / Performance Optimization
+### 贡献方向
+- 功能增强
+- Bug修复
+- 文档完善
+- 性能优化
 
-## 📝 许可证 / License
+## 📝 许可证
 
 MIT License
 
-## 📮 联系方式 / Contact
+## 📮 联系方式
 
-**微信 / WeChat**：`whj7087824`  
-**加好友时请注明 / Please note when adding friend**：`RedInsight激活` 或 `github`
+**微信**：`whj7087824`  
+**加好友时请注明**：`RedInsight激活` 或 `github`
 
 如有问题或建议，欢迎通过微信联系！
 
-If you have any questions or suggestions, please contact via WeChat!
-
 ---
 
-## 🏷️ 标签 / Tags
+## 🏷️ 标签
 
-`reddit养号` `reddit数据分析` `AI大模型发帖` `reddit热帖追踪` `Reddit API` `Python` `Streamlit` `AI` `机器学习` `数据分析` `自然语言处理`
-
-`reddit account nurturing` `reddit data analysis` `AI LLM posting` `reddit hot post tracking` `Reddit API` `Python` `Streamlit` `AI` `Machine Learning` `Data Analysis` `Natural Language Processing`
+`reddit养号` `reddit数据分析` `AI大模型发帖` `reddit热帖追踪` `Reddit API` `Python` `Streamlit` `AI` `机器学习` `数据分析` `自然语言处理` `自动化运营` `智能筛选`
 
 ---
 
@@ -479,8 +555,6 @@ If you have any questions or suggestions, please contact via WeChat!
 
 **⭐ 如果这个项目对您有帮助，请给个Star支持一下！⭐**
 
-**⭐ If this project helps you, please give it a Star! ⭐**
-
-Made with ❤️ by RedInsight Team
+由 RedInsight 团队用 ❤️ 制作
 
 </div>
