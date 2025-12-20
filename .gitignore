@@ -109,3 +109,8 @@ dmypy.json
 *.temp
 temp/
 tmp/
+
+# Backup files
+*.backup_*
+*.bak
+*~

@@ -57,207 +57,1006 @@ def toggle_state(key, value):
     st.session_state[key] = value
     st.rerun()
 
-def create_merged_analysis_page():
-    """创建合并的数据分析与结果展示页面"""
-    
-    st.header("📊 本地数据管理")
-    
-    # 检查后台分析状态
+def _invalidate_local_data_caches():
+    """删除数据后清理相关缓存，保证界面数据及时刷新"""
     try:
-        from background_analyzer import background_analyzer
-        analysis_status = background_analyzer.get_status()
-        
-        if analysis_status.get('running', False):
-            st.info("🔄 后台分析正在进行中，您可以正常使用数据管理功能")
-            st.info(f"分析状态: {analysis_status.get('status', '未知状态')}")
-    except ImportError:
-        pass
-    
-    if not st.session_state.initialized:
-        st.warning("请先配置API密钥并初始化系统")
-        return
-    
-    # 显示页面说明
-    st.info("💡 此页面提供数据管理、整理和本地筛选功能")
-    
-    # 创建侧边栏用于导航
-    st.sidebar.markdown("### 🎯 功能导航")
-    
-    # 初始化页面选项
-    if 'page_option' not in st.session_state:
-        st.session_state.page_option = "📋 数据管理"
-    
-    page_option = st.sidebar.selectbox(
-        "选择功能模块",
-        ["📋 数据管理", "📦 数据整理打包", "📊 结果展示"],
-        index=["📋 数据管理", "📦 数据整理打包", "📊 结果展示"].index(st.session_state.page_option) if st.session_state.page_option in ["📋 数据管理", "📦 数据整理打包", "📊 结果展示"] else 0,
-        help="选择要使用的功能模块"
-    )
-    
-    # 更新页面选项 - 使用条件渲染避免不必要的rerun
-    if page_option != st.session_state.page_option:
-        st.session_state.page_option = page_option
-        # 清除相关缓存，因为切换页面可能需要新数据
         get_cached_analysis_statistics.clear()
         get_cached_subreddit_list.clear()
         get_cached_posts_grouped.clear()
-        st.rerun()
+    except Exception:
+        # cache clear失败不应阻塞主流程
+        pass
+
+def _to_display_value(v):
+    """把常见类型转换为适合在表格里展示的值"""
+    if v is None:
+        return None
+    try:
+        # numpy / pandas 标量
+        if hasattr(v, "item"):
+            v = v.item()
+    except Exception:
+        pass
+    if isinstance(v, (datetime,)):
+        return v.isoformat(sep=" ", timespec="seconds")
+    # JSON字段一般是list/dict
+    if isinstance(v, (dict, list)):
+        try:
+            return json.dumps(v, ensure_ascii=False)
+        except Exception:
+            return str(v)
+    return v
+
+def _get_model_pk_info(model):
+    """返回主键列名列表与列对象列表（支持复合主键）"""
+    from sqlalchemy.inspection import inspect as sa_inspect
+    mapper = sa_inspect(model)
+    pk_cols = list(mapper.primary_key)
+    pk_names = [c.key for c in pk_cols]
+    return pk_names, pk_cols
+
+def _get_model_columns(model):
+    """返回模型的列名列表（仅表字段，不含关系）"""
+    from sqlalchemy.inspection import inspect as sa_inspect
+    mapper = sa_inspect(model)
+    return [c.key for c in mapper.columns]
+
+def _build_dataframe(rows, columns):
+    """把ORM行转换成DataFrame（延迟导入pandas）"""
+    import pandas as pd
+    data = []
+    for r in rows:
+        item = {}
+        for col in columns:
+            item[col] = _to_display_value(getattr(r, col, None))
+        data.append(item)
+    return pd.DataFrame(data)
+
+def _delete_by_pk(session, model, pk_names, pk_values):
+    """按主键删除一条记录。pk_values: 单主键值或复合主键tuple"""
+    try:
+        obj = session.get(model, pk_values)
+    except Exception:
+        obj = None
+    if obj is None:
+        # 兼容旧Query.get
+        try:
+            obj = session.query(model).get(pk_values)
+        except Exception:
+            obj = None
+    if obj is None:
+        # 最后兜底：按字段过滤
+        q = session.query(model)
+        if len(pk_names) == 1:
+            q = q.filter(getattr(model, pk_names[0]) == pk_values)
+        else:
+            for k, v in zip(pk_names, pk_values):
+                q = q.filter(getattr(model, k) == v)
+        obj = q.first()
+    if obj is None:
+        return False
+    session.delete(obj)
+    return True
+
+def render_model_browser(*, title, description, model, default_order_col=None, page_size_default=50, key_prefix=None):
+    """通用：分页查看 + 单条/多选删除"""
+    key_prefix = key_prefix or getattr(model, "__tablename__", model.__name__)
+
+    st.markdown(f"#### {title}")
+    if description:
+        st.caption(description)
+
+    pk_names, pk_cols = _get_model_pk_info(model)
+    all_cols = _get_model_columns(model)
+    # 默认展示：主键 + 前若干列（避免一次性塞太多）
+    display_cols_default = []
+    for c in pk_names:
+        if c in all_cols:
+            display_cols_default.append(c)
+    for c in all_cols:
+        if c not in display_cols_default:
+            display_cols_default.append(c)
+        if len(display_cols_default) >= 12:
+            break
+
+    with st.expander("筛选与分页", expanded=False):
+        colf1, colf2, colf3 = st.columns(3)
+        with colf1:
+            search_text = st.text_input("关键词搜索（仅对文本列模糊匹配）", key=f"{key_prefix}_search")
+        with colf2:
+            page_size = st.selectbox("每页数量", [20, 50, 100, 200], index=[20, 50, 100, 200].index(page_size_default) if page_size_default in [20, 50, 100, 200] else 1, key=f"{key_prefix}_page_size")
+        with colf3:
+            order_col = st.selectbox("排序字段", options=all_cols, index=all_cols.index(default_order_col) if default_order_col in all_cols else 0, key=f"{key_prefix}_order_col")
+        colf4, colf5 = st.columns(2)
+        with colf4:
+            order_desc = st.checkbox("倒序（最新在前）", value=True, key=f"{key_prefix}_order_desc")
+        with colf5:
+            visible_cols = st.multiselect("显示字段", options=all_cols, default=display_cols_default, key=f"{key_prefix}_visible_cols")
+
+    session = st.session_state.db.get_session()
+    try:
+        q = session.query(model)
+
+        # 简单关键词搜索：对前几个文本列 OR 匹配
+        if search_text:
+            from sqlalchemy import or_
+            text_cols = []
+            for c in pk_cols + [getattr(model, n, None) for n in all_cols]:
+                try:
+                    col_obj = c if hasattr(c, "type") else None
+                except Exception:
+                    col_obj = None
+                # 只匹配String/Text类型
+                if col_obj is not None:
+                    tname = col_obj.type.__class__.__name__.lower()
+                    if "string" in tname or "text" in tname:
+                        text_cols.append(col_obj)
+                if len(text_cols) >= 6:
+                    break
+            if text_cols:
+                pattern = f"%{search_text}%"
+                q = q.filter(or_(*[c.ilike(pattern) for c in text_cols]))
+
+        total = q.count()
+        if total == 0:
+            st.info("暂无数据。")
+            return
+
+        max_page = max(1, (total + page_size - 1) // page_size)
+        page = st.number_input("页码", min_value=1, max_value=max_page, value=1, step=1, key=f"{key_prefix}_page")
+        offset = int((page - 1) * page_size)
+
+        order_attr = getattr(model, order_col, None)
+        if order_attr is not None:
+            q = q.order_by(order_attr.desc() if order_desc else order_attr.asc())
+        rows = q.offset(offset).limit(int(page_size)).all()
+
+        # 生成DataFrame
+        cols_for_df = [c for c in visible_cols if c in all_cols]
+        # 确保主键列始终存在（删除需要）
+        for c in pk_names:
+            if c not in cols_for_df:
+                cols_for_df.insert(0, c)
+        df = _build_dataframe(rows, cols_for_df)
+
+        import pandas as pd
+        if df.empty:
+            st.info("当前页无数据。")
+            return
+
+        df_edit = df.copy()
+        df_edit.insert(0, "删除", False)
+
+        st.caption(f"共 {total} 条 | 当前第 {page}/{max_page} 页")
+        edited = st.data_editor(
+            df_edit,
+            key=f"{key_prefix}_editor",
+            hide_index=True,
+            disabled=[c for c in df_edit.columns if c != "删除"],
+            use_container_width=True,
+        )
+
+        selected = edited[edited["删除"] == True]  # noqa: E712
+        selected_count = int(selected.shape[0])
+
+        col_del1, col_del2, col_del3 = st.columns([2, 2, 6])
+        with col_del1:
+            confirm = st.checkbox("确认删除", key=f"{key_prefix}_confirm_delete")
+        with col_del2:
+            do_delete = st.button(f"🗑️ 删除选中 ({selected_count})", type="secondary", disabled=(selected_count == 0 or not confirm), key=f"{key_prefix}_delete_btn")
+        with col_del3:
+            st.caption("提示：勾选“删除”列可单条或多条删除。")
+
+        if do_delete:
+            deleted = 0
+            try:
+                for _, r in selected.iterrows():
+                    if len(pk_names) == 1:
+                        pk_val = _to_display_value(r[pk_names[0]])
+                    else:
+                        pk_val = tuple(_to_display_value(r[k]) for k in pk_names)
+                    if _delete_by_pk(session, model, pk_names, pk_val):
+                        deleted += 1
+                session.commit()
+                _invalidate_local_data_caches()
+                st.success(f"✅ 已删除 {deleted} 条记录")
+                st.rerun()
+            except Exception as e:
+                session.rollback()
+                st.error(f"❌ 删除失败: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+    finally:
+        session.close()
+
+def render_reddit_data_section():
+    st.info("📥 这里展示从 Reddit 抓取/索引得到的原始数据。支持关键词搜索、分页浏览、单条/多选删除。")
+    render_model_browser(
+        title="🧾 Reddit帖子（reddit_posts）",
+        description="抓取到的帖子正文、标题、作者、分数、板块等。",
+        model=st.session_state.db.RedditPost,
+        default_order_col="scraped_at",
+        key_prefix="reddit_posts",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="💬 Reddit评论（reddit_comments）",
+        description="抓取到的评论正文、所属帖子ID、作者、分数等。",
+        model=st.session_state.db.RedditComment,
+        default_order_col="scraped_at",
+        key_prefix="reddit_comments",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📌 子版块信息（subreddit_info）",
+        description="子版块基础信息（订阅数、描述、是否成人等）。",
+        model=st.session_state.db.SubredditInfo,
+        default_order_col="last_updated",
+        key_prefix="subreddit_info",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="🗂️ 子版块索引（subreddit_index）",
+        description="用于推荐/检索的子版块索引与关键词、向量等（如果启用过索引功能）。",
+        model=st.session_state.db.SubredditIndex,
+        default_order_col="indexed_at",
+        key_prefix="subreddit_index",
+    )
+
+def render_analysis_data_section():
+    st.info("📊 这里展示智能筛选功能产生的分析结果数据（痛点提取、情绪分析、需求分析、综合分析、自定义分析等）。")
     
-    # 在侧边栏显示当前选中的模块
-    st.sidebar.markdown(f"**当前模块:** {page_option}")
+    # 显示智能筛选的分析结果（按分析类型分类显示）
+    try:
+        session = st.session_state.db.get_session()
+        try:
+            # 获取所有智能筛选相关的分析类型
+            from sqlalchemy import distinct
+            all_types = session.query(distinct(st.session_state.db.AnalysisResult.analysis_type)).all()
+            # 筛选智能筛选相关的分析类型
+            smart_filter_types = {
+                'pain_point_analysis': '痛点提取',
+                'sentiment_analysis': '情绪分析',
+                'need_analysis': '需求分析',
+                'comprehensive_analysis': '综合分析',
+                'custom_analysis': '自定义分析'
+            }
+            
+            # 检查数据库中是否有这些类型的分析结果
+            found_types = []
+            for analysis_type, display_name in smart_filter_types.items():
+                count = session.query(st.session_state.db.AnalysisResult).filter(
+                    st.session_state.db.AnalysisResult.analysis_type == analysis_type
+                ).count()
+                if count > 0:
+                    found_types.append((analysis_type, display_name, count))
+            
+            if not found_types:
+                st.info("📭 暂无智能筛选分析结果，请在'智能筛选'功能中进行分析")
+                return
+            
+            # 按分析类型分组显示
+            for analysis_type, display_name, count in found_types:
+                st.markdown(f"#### 📊 {display_name}（{count}条记录）")
+                st.caption(f"智能筛选功能中的{display_name}结果（analysis_type: {analysis_type}）")
+                
+                # 使用自定义查询来过滤分析类型
+                render_analysis_results_by_type(analysis_type, display_name, key_prefix=f"smart_filter_{analysis_type}")
+                st.markdown("---")
+        finally:
+            session.close()
+    except Exception as e:
+        st.error(f"❌ 加载智能筛选分析结果失败: {str(e)}")
+        import traceback
+        with st.expander("查看错误详情"):
+            st.code(traceback.format_exc())
+
+def render_analysis_results_by_type(analysis_type: str, display_name: str, key_prefix: str):
+    """按分析类型显示分析结果"""
+    try:
+        session = st.session_state.db.get_session()
+        try:
+            # 查询该类型的所有分析结果
+            query = session.query(st.session_state.db.AnalysisResult).filter(
+                st.session_state.db.AnalysisResult.analysis_type == analysis_type
+            ).order_by(st.session_state.db.AnalysisResult.created_at.desc())
+            
+            # 分页
+            page_size = st.session_state.get(f"{key_prefix}_page_size", 50)
+            page_num = st.session_state.get(f"{key_prefix}_page_num", 1)
+            
+            total_count = query.count()
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            if total_count == 0:
+                st.info("暂无记录")
+                return
+            
+            # 分页控件
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.caption(f"共 {total_count} 条记录，第 {page_num}/{total_pages} 页")
+            with col2:
+                page_size = st.selectbox("每页数量", [20, 50, 100, 200], 
+                                        index=[20, 50, 100, 200].index(page_size) if page_size in [20, 50, 100, 200] else 1,
+                                        key=f"{key_prefix}_page_size")
+                st.session_state[f"{key_prefix}_page_size"] = page_size
+            with col3:
+                if total_pages > 1:
+                    page_num = st.number_input("页码", min_value=1, max_value=total_pages, value=page_num, key=f"{key_prefix}_page_num")
+                    st.session_state[f"{key_prefix}_page_num"] = page_num
+            
+            # 获取当前页的数据
+            offset = (page_num - 1) * page_size
+            results = query.offset(offset).limit(page_size).all()
+            
+            # 显示结果
+            for idx, result in enumerate(results):
+                with st.expander(f"记录 #{result.id} - {result.content_id} ({result.created_at.strftime('%Y-%m-%d %H:%M:%S') if result.created_at else 'N/A'})"):
+                    col_info1, col_info2 = st.columns([2, 1])
+                    with col_info1:
+                        st.write(f"**内容ID**: {result.content_id}")
+                        st.write(f"**内容类型**: {result.content_type}")
+                        st.write(f"**分析类型**: {result.analysis_type}")
+                        if result.model_used:
+                            st.write(f"**使用模型**: {result.model_used}")
+                    with col_info2:
+                        if st.button("🗑️ 删除", key=f"delete_{key_prefix}_{result.id}"):
+                            try:
+                                session.delete(result)
+                                session.commit()
+                                st.success("✅ 已删除")
+                                st.rerun()
+                            except Exception as e:
+                                session.rollback()
+                                st.error(f"❌ 删除失败: {str(e)}")
+                    
+                    # 显示分析结果
+                    st.markdown("**分析结果:**")
+                    try:
+                        import json
+                        if isinstance(result.result, str):
+                            try:
+                                result_json = json.loads(result.result)
+                                st.json(result_json)
+                            except:
+                                st.text(result.result)
+                        else:
+                            st.json(result.result)
+                    except:
+                        st.text(str(result.result))
+                
+                if idx < len(results) - 1:
+                    st.markdown("---")
+        finally:
+            session.close()
+    except Exception as e:
+        st.error(f"❌ 加载分析结果失败: {str(e)}")
+
+def render_posting_data_section():
+    st.info("📝 这里展示“智能发帖/发帖计划/规则/互动监控”相关的本地数据。")
+    render_model_browser(
+        title="📝 帖子内容库（post_contents）",
+        description="准备发布的帖子内容、状态等。",
+        model=st.session_state.db.PostContent,
+        default_order_col="created_at",
+        key_prefix="post_contents",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📅 发布计划（posting_schedules）",
+        description="计划发布的帖子与时间、目标子版块、状态等。",
+        model=st.session_state.db.PostingSchedule,
+        default_order_col="created_at",
+        key_prefix="posting_schedules",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📜 子版块规则（subreddit_rules）",
+        description="抓取/维护的子版块规则，用于内容合规检查。",
+        model=st.session_state.db.SubredditRule,
+        default_order_col="fetched_at",
+        key_prefix="subreddit_rules",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="👀 发帖后互动监控（post_interactions）",
+        description="用于跟踪发帖后的评论/点赞/自动回复触发等状态。",
+        model=st.session_state.db.PostInteraction,
+        default_order_col="created_at",
+        key_prefix="post_interactions",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="💬 自动回复记录（auto_replies）",
+        description="自动回复的内容、状态、错误信息等。",
+        model=st.session_state.db.AutoReply,
+        default_order_col="created_at",
+        key_prefix="auto_replies",
+    )
+
+def render_automation_data_section():
+    st.info("🤖 这里展示自动化运营（评分/队列/配额/配置/状态）相关数据。")
+    render_model_browser(
+        title="⭐ 帖子评分（post_scoring）",
+        description="自动化运营对帖子打分的结果与原因。",
+        model=st.session_state.db.PostScoring,
+        default_order_col="scored_at",
+        key_prefix="post_scoring",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="🧾 互动任务队列（auto_interaction_queue）",
+        description="待执行/执行中/已完成的点赞/评论等任务。",
+        model=st.session_state.db.AutoInteractionQueue,
+        default_order_col="created_at",
+        key_prefix="auto_interaction_queue",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📝 自动发帖队列（auto_post_queue）",
+        description="自动发帖任务队列（待执行/执行中/完成/失败）。",
+        model=st.session_state.db.AutoPostQueue,
+        default_order_col="created_at",
+        key_prefix="auto_post_queue",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📈 每日配额（daily_quota）",
+        description="自动化运营的每日限额与统计。",
+        model=st.session_state.db.DailyQuota,
+        default_order_col="date",
+        key_prefix="daily_quota",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="⚙️ 互动配置（auto_interaction_config）",
+        description="自动化运营配置（如RPTA配置、调度器配置等）。",
+        model=st.session_state.db.AutoInteractionConfig,
+        default_order_col="updated_at",
+        key_prefix="auto_interaction_config",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📊 互动状态（auto_interaction_status）",
+        description="自动化运营运行状态与统计信息。",
+        model=st.session_state.db.AutoInteractionStatus,
+        default_order_col="updated_at",
+        key_prefix="auto_interaction_status",
+    )
+
+def render_account_data_section():
+    st.info("👤 这里展示账号画像、关注、互动统计、发帖资格检测等数据。")
+    render_model_browser(
+        title="🤝 用户互动（user_interactions）",
+        description="用户级互动记录。",
+        model=st.session_state.db.UserInteractions,
+        default_order_col="created_at",
+        key_prefix="user_interactions",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="🔭 帖子监控（post_monitoring）",
+        description="监控的帖子与监控状态。",
+        model=st.session_state.db.PostMonitoring,
+        default_order_col="created_at",
+        key_prefix="post_monitoring",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📊 互动统计（interaction_stats）",
+        description="聚合后的互动统计。",
+        model=st.session_state.db.InteractionStats,
+        default_order_col="updated_at",
+        key_prefix="interaction_stats",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="👣 用户关注（user_follows）",
+        description="关注的用户列表与状态。",
+        model=st.session_state.db.UserFollows,
+        default_order_col="followed_at",
+        key_prefix="user_follows",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📸 账号快照（account_snapshots）",
+        description="账号Karma、账号年龄、加入子版块数等快照记录。",
+        model=st.session_state.db.AccountSnapshots,
+        default_order_col="snapshot_time",
+        key_prefix="account_snapshots",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="✅ 子版块发帖资格（subreddit_readiness）",
+        description="对子版块是否可发帖的评估结果与建议。",
+        model=st.session_state.db.SubredditReadiness,
+        default_order_col="checked_at",
+        key_prefix="subreddit_readiness",
+    )
+
+def render_other_data_section():
+    st.info("📎 这里是其他杂项数据（提示词模板、上传文件记录、关键词历史等）。")
+    render_model_browser(
+        title="🧾 提示词模板（prompt_templates）",
+        description="提示词模板及其内容。",
+        model=st.session_state.db.PromptTemplate,
+        default_order_col="updated_at",
+        key_prefix="prompt_templates",
+    )
+    st.markdown("---")
+    render_model_browser(
+        title="📎 上传文件（uploaded_files）",
+        description="上传到本地的文件记录（文本/图片等）。",
+        model=st.session_state.db.UploadedFile,
+        default_order_col="uploaded_at",
+        key_prefix="uploaded_files",
+    )
+    st.markdown("---")
+    render_keyword_history_section()
+    render_subreddit_history_section()
+
+def render_keyword_history_section():
+    """渲染关键词历史记录部分"""
+    from sqlalchemy import distinct
     
-    # 根据选择的模块显示对应功能
-    if st.session_state.page_option == "📋 数据管理":
-        show_data_management()
-    elif st.session_state.page_option == "📦 数据整理打包":
-        show_data_packaging()
-    elif st.session_state.page_option == "📊 结果展示":
-        show_results_display()
+    st.markdown("### 🔑 关键词历史记录（keyword_history）")
+    st.info("💡 存储用户在项目中输入过的所有关键词，支持按来源筛选和删除。**已启用自动去重功能**：相同关键词会自动合并，使用次数累加，来源信息会合并显示。")
+    
+    try:
+        session = st.session_state.db.get_session()
+        try:
+            # 获取所有来源
+            sources = session.query(distinct(st.session_state.db.KeywordHistory.source)).all()
+            source_list = [s[0] for s in sources if s[0]]
+            source_list.insert(0, "全部")
+            
+            # 来源筛选
+            col_filter1, col_filter2 = st.columns([1, 3])
+            with col_filter1:
+                selected_source = st.selectbox(
+                    "筛选来源",
+                    source_list,
+                    key="keyword_history_source_filter"
+                )
+            
+            with col_filter2:
+                search_keyword = st.text_input(
+                    "搜索关键词",
+                    placeholder="输入关键词进行搜索...",
+                    key="keyword_history_search"
+                )
+            
+            # 构建查询（已实现自动去重，每个关键词只保留一条记录）
+            from sqlalchemy import distinct
+            query = session.query(st.session_state.db.KeywordHistory)
+            
+            # 如果选择了特定来源，需要检查来源字段是否包含该来源（因为来源可能已合并）
+            if selected_source != "全部":
+                # 使用 LIKE 查询，因为来源可能是多个来源的逗号分隔字符串
+                query = query.filter(
+                    (st.session_state.db.KeywordHistory.source == selected_source) |
+                    (st.session_state.db.KeywordHistory.source.contains(f", {selected_source}")) |
+                    (st.session_state.db.KeywordHistory.source.contains(f"{selected_source},"))
+                )
+            
+            if search_keyword:
+                query = query.filter(
+                    st.session_state.db.KeywordHistory.keyword.contains(search_keyword)
+                )
+            
+            # 排序和限制（按最后使用时间降序）
+            keyword_history = query.order_by(
+                st.session_state.db.KeywordHistory.last_used_at.desc()
+            ).limit(500).all()
+            
+            if not keyword_history:
+                st.info("📭 没有找到关键词历史记录")
+                return
+            
+            st.markdown(f"**共找到 {len(keyword_history)} 条记录**")
+            
+            # 显示关键词列表
+            for idx, record in enumerate(keyword_history):
+                col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                
+                with col1:
+                    st.markdown(f"**{record.keyword}**")
+                
+                with col2:
+                    # 显示来源（可能是多个来源的合并）
+                    source_display = record.source or '未知'
+                    if ',' in source_display:
+                        st.caption(f"来源: {source_display} (已合并)")
+                    else:
+                        st.caption(f"来源: {source_display}")
+                    st.caption(f"使用次数: {record.usage_count}")
+                
+                with col3:
+                    st.caption(f"首次使用: {record.created_at.strftime('%Y-%m-%d %H:%M') if record.created_at else '未知'}")
+                    st.caption(f"最后使用: {record.last_used_at.strftime('%Y-%m-%d %H:%M') if record.last_used_at else '未知'}")
+                
+                with col4:
+                    if st.button("🗑️ 删除", key=f"delete_keyword_{record.id}"):
+                        try:
+                            session.delete(record)
+                            session.commit()
+                            st.success(f"✅ 已删除关键词: {record.keyword}")
+                            st.rerun()
+                        except Exception as e:
+                            session.rollback()
+                            st.error(f"❌ 删除失败: {str(e)}")
+                
+                if idx < len(keyword_history) - 1:
+                    st.markdown("---")
+            
+            # 批量删除
+            st.markdown("---")
+            st.markdown("#### 🗑️ 批量操作")
+            col_batch1, col_batch2 = st.columns([1, 1])
+            with col_batch1:
+                if st.button("🗑️ 删除所有记录", type="secondary", key="delete_all_keywords"):
+                    try:
+                        count = session.query(st.session_state.db.KeywordHistory).count()
+                        session.query(st.session_state.db.KeywordHistory).delete()
+                        session.commit()
+                        st.success(f"✅ 已删除所有 {count} 条关键词历史记录")
+                        st.rerun()
+                    except Exception as e:
+                        session.rollback()
+                        st.error(f"❌ 批量删除失败: {str(e)}")
+            
+            with col_batch2:
+                if selected_source != "全部" and st.button("🗑️ 删除当前来源记录", type="secondary", key="delete_source_keywords"):
+                    try:
+                        count = session.query(st.session_state.db.KeywordHistory).filter(
+                            st.session_state.db.KeywordHistory.source == selected_source
+                        ).count()
+                        session.query(st.session_state.db.KeywordHistory).filter(
+                            st.session_state.db.KeywordHistory.source == selected_source
+                        ).delete()
+                        session.commit()
+                        st.success(f"✅ 已删除来源 '{selected_source}' 的 {count} 条记录")
+                        st.rerun()
+                    except Exception as e:
+                        session.rollback()
+                        st.error(f"❌ 批量删除失败: {str(e)}")
+                        
+        finally:
+            session.close()
+    except Exception as e:
+        st.error(f"❌ 加载关键词历史记录失败: {str(e)}")
+        import traceback
+        with st.expander("查看错误详情"):
+            st.code(traceback.format_exc())
+
+def render_subreddit_history_section():
+    """渲染子版块历史记录部分"""
+    from sqlalchemy import distinct
+    
+    st.markdown("### 📍 子版块历史记录（subreddit_history）")
+    st.info("💡 存储智能推荐和AI生成功能推荐的子版块，**已启用自动去重功能**：相同子版块会自动合并，使用次数累加，来源信息会合并显示。")
+    
+    try:
+        session = st.session_state.db.get_session()
+        try:
+            # 获取所有来源
+            sources = session.query(distinct(st.session_state.db.SubredditHistory.source)).all()
+            source_list = [s[0] for s in sources if s[0]]
+            source_list.insert(0, "全部")
+            
+            # 来源筛选
+            col_filter1, col_filter2 = st.columns([1, 3])
+            with col_filter1:
+                selected_source = st.selectbox(
+                    "筛选来源",
+                    source_list,
+                    key="subreddit_history_source_filter"
+                )
+            
+            with col_filter2:
+                search_subreddit = st.text_input(
+                    "搜索子版块",
+                    placeholder="输入子版块名称进行搜索...",
+                    key="subreddit_history_search"
+                )
+            
+            # 构建查询（已实现自动去重，每个子版块只保留一条记录）
+            query = session.query(st.session_state.db.SubredditHistory)
+            
+            # 如果选择了特定来源，需要检查来源字段是否包含该来源（因为来源可能已合并）
+            if selected_source != "全部":
+                # 使用 LIKE 查询，因为来源可能是多个来源的逗号分隔字符串
+                query = query.filter(
+                    (st.session_state.db.SubredditHistory.source == selected_source) |
+                    (st.session_state.db.SubredditHistory.source.contains(f", {selected_source}")) |
+                    (st.session_state.db.SubredditHistory.source.contains(f"{selected_source},"))
+                )
+            
+            if search_subreddit:
+                query = query.filter(
+                    st.session_state.db.SubredditHistory.subreddit_name.contains(search_subreddit)
+                )
+            
+            # 排序和限制（按最后使用时间降序）
+            subreddit_history = query.order_by(
+                st.session_state.db.SubredditHistory.last_used_at.desc()
+            ).limit(500).all()
+            
+            if not subreddit_history:
+                st.info("📭 没有找到子版块历史记录")
+                return
+            
+            st.markdown(f"**共找到 {len(subreddit_history)} 条记录**")
+            
+            # 显示子版块列表
+            for idx, record in enumerate(subreddit_history):
+                col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                
+                with col1:
+                    st.markdown(f"**r/{record.subreddit_name}**")
+                    if record.rank:
+                        st.caption(f"排名: #{record.rank}")
+                
+                with col2:
+                    # 显示来源（可能是多个来源的合并）
+                    source_display = record.source or '未知'
+                    if ',' in source_display:
+                        st.caption(f"来源: {source_display} (已合并)")
+                    else:
+                        st.caption(f"来源: {source_display}")
+                    st.caption(f"使用次数: {record.usage_count}")
+                
+                with col3:
+                    # 显示分数信息
+                    score_info = []
+                    if record.match_score is not None:
+                        score_info.append(f"匹配度: {record.match_score:.1f}")
+                    if record.heat_score is not None:
+                        score_info.append(f"热度: {record.heat_score:.1f}")
+                    if record.combined_score is not None:
+                        score_info.append(f"综合: {record.combined_score:.1f}")
+                    if score_info:
+                        st.caption(" | ".join(score_info))
+                    st.caption(f"首次收录: {record.created_at.strftime('%Y-%m-%d %H:%M') if record.created_at else '未知'}")
+                    st.caption(f"最后使用: {record.last_used_at.strftime('%Y-%m-%d %H:%M') if record.last_used_at else '未知'}")
+                
+                with col4:
+                    if st.button("🗑️ 删除", key=f"delete_subreddit_{record.id}"):
+                        try:
+                            session.delete(record)
+                            session.commit()
+                            st.success(f"✅ 已删除子版块: r/{record.subreddit_name}")
+                            st.rerun()
+                        except Exception as e:
+                            session.rollback()
+                            st.error(f"❌ 删除失败: {str(e)}")
+                
+                if idx < len(subreddit_history) - 1:
+                    st.markdown("---")
+            
+            # 批量删除
+            st.markdown("---")
+            st.markdown("#### 🗑️ 批量操作")
+            col_batch1, col_batch2 = st.columns([1, 1])
+            with col_batch1:
+                if st.button("🗑️ 删除所有记录", type="secondary", key="delete_all_subreddits"):
+                    try:
+                        count = session.query(st.session_state.db.SubredditHistory).count()
+                        session.query(st.session_state.db.SubredditHistory).delete()
+                        session.commit()
+                        st.success(f"✅ 已删除所有 {count} 条子版块历史记录")
+                        st.rerun()
+                    except Exception as e:
+                        session.rollback()
+                        st.error(f"❌ 批量删除失败: {str(e)}")
+            
+            with col_batch2:
+                if selected_source != "全部" and st.button("🗑️ 删除当前来源记录", type="secondary", key="delete_source_subreddits"):
+                    try:
+                        count = session.query(st.session_state.db.SubredditHistory).filter(
+                            (st.session_state.db.SubredditHistory.source == selected_source) |
+                            (st.session_state.db.SubredditHistory.source.contains(f", {selected_source}")) |
+                            (st.session_state.db.SubredditHistory.source.contains(f"{selected_source},"))
+                        ).count()
+                        session.query(st.session_state.db.SubredditHistory).filter(
+                            (st.session_state.db.SubredditHistory.source == selected_source) |
+                            (st.session_state.db.SubredditHistory.source.contains(f", {selected_source}")) |
+                            (st.session_state.db.SubredditHistory.source.contains(f"{selected_source},"))
+                        ).delete()
+                        session.commit()
+                        st.success(f"✅ 已删除来源 '{selected_source}' 的 {count} 条记录")
+                        st.rerun()
+                    except Exception as e:
+                        session.rollback()
+                        st.error(f"❌ 批量删除失败: {str(e)}")
+                        
+        finally:
+            session.close()
+    except Exception as e:
+        st.error(f"❌ 加载子版块历史记录失败: {str(e)}")
+        import traceback
+        with st.expander("查看错误详情"):
+            st.code(traceback.format_exc())
+
+def create_merged_analysis_page():
+    """创建合并的数据分析与结果展示页面"""
+
+    if not st.session_state.initialized:
+        st.warning("请先配置API密钥并初始化系统")
+        return
+
+    st.info("💡 本页面仅用于查看本地数据库数据，并支持单条/多选删除（不会影响其他页面功能）。")
+    show_data_management()
 
 def show_data_management():
-    """显示数据管理功能"""
-    st.subheader("🗂️ 数据管理")
+    """显示数据管理功能 - 整合所有数据库表的数据查看和删除"""
     
-    # 数据统计 - 使用缓存
+    # 数据概览统计
+    st.subheader("📊 数据概览")
     try:
-        stats = get_cached_analysis_statistics(st.session_state.db)
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        with col1:
-            st.metric("总帖子", stats.get('total_posts', 0))
-        with col2:
-            st.metric("总评论", stats.get('total_comments', 0))
-        with col3:
-            st.metric("情感分析", stats.get('sentiment_count', 0))
-        with col4:
-            st.metric("主题分析", stats.get('topic_count', 0))
-        with col5:
-            st.metric("质量评估", stats.get('quality_count', 0))
-        
+        session = st.session_state.db.get_session()
+        try:
+            # 统计所有表的数据量
+            stats = {
+                # Reddit原始数据
+                'reddit_posts': session.query(st.session_state.db.RedditPost).count(),
+                'reddit_comments': session.query(st.session_state.db.RedditComment).count(),
+                'subreddit_info': session.query(st.session_state.db.SubredditInfo).count(),
+                'subreddit_index': session.query(st.session_state.db.SubredditIndex).count(),
+                # 分析结果数据
+                'analysis_result': session.query(st.session_state.db.AnalysisResult).count(),
+                # 智能筛选分析结果统计（替换原来的结构化抽取、向量化文本、聚类结果、业务洞察）
+                'smart_filter_pain_point': session.query(st.session_state.db.AnalysisResult).filter(
+                    st.session_state.db.AnalysisResult.analysis_type == 'pain_point_analysis'
+                ).count(),
+                'smart_filter_sentiment': session.query(st.session_state.db.AnalysisResult).filter(
+                    st.session_state.db.AnalysisResult.analysis_type == 'sentiment_analysis'
+                ).count(),
+                'smart_filter_need': session.query(st.session_state.db.AnalysisResult).filter(
+                    st.session_state.db.AnalysisResult.analysis_type == 'need_analysis'
+                ).count(),
+                'smart_filter_comprehensive': session.query(st.session_state.db.AnalysisResult).filter(
+                    st.session_state.db.AnalysisResult.analysis_type == 'comprehensive_analysis'
+                ).count(),
+                'smart_filter_custom': session.query(st.session_state.db.AnalysisResult).filter(
+                    st.session_state.db.AnalysisResult.analysis_type == 'custom_analysis'
+                ).count(),
+                # 智能发帖数据
+                'post_content': session.query(st.session_state.db.PostContent).count(),
+                'posting_schedule': session.query(st.session_state.db.PostingSchedule).count(),
+                'subreddit_rule': session.query(st.session_state.db.SubredditRule).count(),
+                'post_interaction': session.query(st.session_state.db.PostInteraction).count(),
+                'auto_reply': session.query(st.session_state.db.AutoReply).count(),
+                # 自动化运营数据
+                'post_scoring': session.query(st.session_state.db.PostScoring).count(),
+                'auto_interaction_queue': session.query(st.session_state.db.AutoInteractionQueue).count(),
+                'auto_post_queue': session.query(st.session_state.db.AutoPostQueue).count(),
+                'daily_quota': session.query(st.session_state.db.DailyQuota).count(),
+                'auto_interaction_config': session.query(st.session_state.db.AutoInteractionConfig).count(),
+                'auto_interaction_status': session.query(st.session_state.db.AutoInteractionStatus).count(),
+                # 账号管理数据
+                'user_interactions': session.query(st.session_state.db.UserInteractions).count(),
+                'post_monitoring': session.query(st.session_state.db.PostMonitoring).count(),
+                'interaction_stats': session.query(st.session_state.db.InteractionStats).count(),
+                'user_follows': session.query(st.session_state.db.UserFollows).count(),
+                'account_snapshots': session.query(st.session_state.db.AccountSnapshots).count(),
+                'subreddit_readiness': session.query(st.session_state.db.SubredditReadiness).count(),
+                # 其他数据
+                'prompt_template': session.query(st.session_state.db.PromptTemplate).count(),
+                'uploaded_file': session.query(st.session_state.db.UploadedFile).count(),
+            }
+            
+            # 显示统计卡片（按分类分组）
+            st.markdown("#### 📥 Reddit原始数据")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Reddit帖子", stats['reddit_posts'])
+            with col2:
+                st.metric("Reddit评论", stats['reddit_comments'])
+            with col3:
+                st.metric("子版块信息", stats['subreddit_info'])
+            with col4:
+                st.metric("子版块索引", stats['subreddit_index'])
+            
+            st.markdown("#### 📊 智能筛选分析结果数据")
+            col5, col6, col7, col8, col9 = st.columns(5)
+            with col5:
+                st.metric("痛点提取", stats.get('smart_filter_pain_point', 0))
+            with col6:
+                st.metric("情绪分析", stats.get('smart_filter_sentiment', 0))
+            with col7:
+                st.metric("需求分析", stats.get('smart_filter_need', 0))
+            with col8:
+                st.metric("综合分析", stats.get('smart_filter_comprehensive', 0))
+            with col9:
+                st.metric("自定义分析", stats.get('smart_filter_custom', 0))
+            
+            st.markdown("#### 📝 智能发帖数据")
+            col10, col11, col12, col13, col14 = st.columns(5)
+            with col10:
+                st.metric("帖子内容", stats['post_content'])
+            with col11:
+                st.metric("发布计划", stats['posting_schedule'])
+            with col12:
+                st.metric("子版块规则", stats['subreddit_rule'])
+            with col13:
+                st.metric("互动监控", stats['post_interaction'])
+            with col14:
+                st.metric("自动回复", stats['auto_reply'])
+            
+            st.markdown("#### 🤖 自动化运营数据")
+            col15, col16, col17, col18, col19, col20 = st.columns(6)
+            with col15:
+                st.metric("帖子评分", stats['post_scoring'])
+            with col16:
+                st.metric("互动队列", stats['auto_interaction_queue'])
+            with col17:
+                st.metric("发帖队列", stats['auto_post_queue'])
+            with col18:
+                st.metric("每日配额", stats['daily_quota'])
+            with col19:
+                st.metric("互动配置", stats['auto_interaction_config'])
+            with col20:
+                st.metric("互动状态", stats['auto_interaction_status'])
+            
+            st.markdown("#### 👤 账号管理数据")
+            col21, col22, col23, col24, col25, col26 = st.columns(6)
+            with col21:
+                st.metric("用户互动", stats['user_interactions'])
+            with col22:
+                st.metric("帖子监控", stats['post_monitoring'])
+            with col23:
+                st.metric("互动统计", stats['interaction_stats'])
+            with col24:
+                st.metric("用户关注", stats['user_follows'])
+            with col25:
+                st.metric("账号快照", stats['account_snapshots'])
+            with col26:
+                st.metric("子版块就绪", stats['subreddit_readiness'])
+            
+            st.markdown("#### 📎 其他数据")
+            col27, col28 = st.columns(2)
+            with col27:
+                st.metric("提示词模板", stats['prompt_template'])
+            with col28:
+                st.metric("上传文件", stats['uploaded_file'])
+        finally:
+            session.close()
     except Exception as e:
         st.error(f"获取统计信息失败: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
     
-    # 数据管理操作
-    st.subheader("数据操作")
+    st.markdown("---")
     
-    col1, col2, col3, col4 = st.columns(4)
+    # 数据分类标签页
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📥 Reddit原始数据",
+        "📊 分析结果数据",
+        "📝 智能发帖数据",
+        "🤖 自动化运营数据",
+        "👤 账号管理数据",
+        "📎 其他数据"
+    ])
     
-    with col1:
-        if st.button("🗑️ 清空所有数据", type="secondary"):
-            if st.session_state.db.clear_all_data():
-                # 清除所有缓存
-                get_cached_analysis_statistics.clear()
-                get_cached_subreddit_list.clear()
-                get_cached_posts_grouped.clear()
-                st.success("✅ 所有数据已清空")
-                st.rerun()
-            else:
-                st.error("❌ 清空数据失败")
+    with tab1:
+        render_reddit_data_section()
     
-    with col2:
-        # 获取子版块列表 - 使用缓存
-        subreddits_list = get_cached_subreddit_list(st.session_state.db)
-        if subreddits_list:
-            selected_subreddit = st.selectbox("选择子版块", ["全部"] + subreddits_list, key="data_management_subreddit")
-        else:
-            selected_subreddit = "全部"
-            st.info("暂无子版块数据")
+    with tab2:
+        render_analysis_data_section()
     
-    with col3:
-        batch_limit = st.number_input("批量分析数量", min_value=5, max_value=100, value=25, key="batch_analysis_limit")
+    with tab3:
+        render_posting_data_section()
     
-    with col4:
-        batch_ai_provider = st.selectbox("批量分析AI提供商", ["openai", "anthropic", "deepseek"], key="batch_ai_provider")
+    with tab4:
+        render_automation_data_section()
     
-    # 数据分组管理
-    st.subheader("📋 数据分组管理")
-    st.write("按搜索日期和板块名称分组显示数据，支持批量操作")
+    with tab5:
+        render_account_data_section()
     
-    try:
-        # 获取分组数据 - 使用缓存
-        grouped_data = get_cached_posts_grouped(st.session_state.db)
-        
-        if grouped_data:
-            # 显示分组列表
-            for group_key, group_info in grouped_data.items():
-                date = group_info['date']
-                subreddit = group_info['subreddit']
-                total_posts = group_info['total_posts']
-                total_comments = group_info['total_comments']
-                
-                # 创建分组标题
-                group_title = f"📅 {date} | 📍 r/{subreddit} | 📊 {total_posts}个帖子 | 💬 {total_comments}条评论"
-                
-                with st.expander(group_title, expanded=False):
-                    # 分组操作按钮
-                    col_op1, col_op2, col_op3, col_op4 = st.columns(4)
-                    
-                    with col_op1:
-                        show_details = st.checkbox("👀 查看详情", key=create_unique_key("view", group_key))
-                    
-                    with col_op2:
-                        show_package = st.checkbox("📦 整理打包", key=create_unique_key("package", group_key))
-                    
-                    with col_op3:
-                        show_llm = st.checkbox("🤖 传递给大模型", key=create_unique_key("llm_process", group_key))
-                    
-                    with col_op4:
-                        if st.button("🗑️ 删除分组", key=create_unique_key("delete", group_key), type="secondary"):
-                            if st.session_state.db.delete_posts_by_group(date, subreddit):
-                                # 清除相关缓存
-                                get_cached_analysis_statistics.clear()
-                                get_cached_subreddit_list.clear()
-                                get_cached_posts_grouped.clear()
-                                st.success(f"✅ 已删除 {date} r/{subreddit} 的所有数据")
-                                st.rerun()
-                            else:
-                                st.error("❌ 删除失败")
-                    
-                    # 显示详情
-                    if show_details:
-                        st.write("**帖子详情:**")
-                        posts = group_info['posts']
-                        
-                        # 帖子列表
-                        for i, post in enumerate(posts[:10]):  # 只显示前10个
-                            # 使用容器而不是expander来避免嵌套
-                            with st.container():
-                                st.write(f"**📌 {post.title[:60]}... (分数: {post.score})**")
-                                col_detail1, col_detail2 = st.columns([3, 1])
-                                
-                                with col_detail1:
-                                    st.write(f"**作者:** u/{post.author}")
-                                    st.write(f"**分数:** {post.score} | **评论数:** {post.num_comments}")
-                                    st.write(f"**时间:** {post.created_utc.strftime('%Y-%m-%d %H:%M')}")
-                                    if post.selftext:
-                                        st.write(f"**内容:** {post.selftext[:200]}...")
-                                
-                                with col_detail2:
-                                    if st.button("🗑️ 删除", key=f"delete_post_{post.id}", type="secondary"):
-                                        if st.session_state.db.delete_post(post.id):
-                                            st.success("✅ 帖子已删除")
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ 删除失败")
-                                
-                                st.divider()  # 添加分隔线
-                        
-                        if len(posts) > 10:
-                            st.info(f"还有 {len(posts) - 10} 个帖子未显示...")
-                    
-                    # 整理打包
-                    if show_package:
-                        show_group_packaging(group_key, group_info)
-                    
-                    # 传递给大模型
-                    if show_llm:
-                        show_group_llm_processing(group_key, group_info)
-        else:
-            st.info("暂无分组数据")
-            
-    except Exception as e:
-        st.error(f"获取分组数据失败: {str(e)}")
+    with tab6:
+        render_other_data_section()
 
 def show_group_packaging(group_key, group_info):
     """显示分组数据打包功能"""

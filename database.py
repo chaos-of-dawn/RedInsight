@@ -2,15 +2,15 @@
 数据库模块 - 使用SQLAlchemy管理本地数据库
 存储Reddit帖子和评论数据
 """
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON, Index
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON, Index, distinct, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import logging
 import json
 import numpy as np
-from typing import List, Tuple, Dict
-from config import Config
+from typing import List, Tuple, Dict, Any
+from app_config import Config
 
 Base = declarative_base()
 
@@ -333,6 +333,298 @@ class SubredditReadiness(Base):
         Index('idx_readiness_subreddit', 'subreddit', 'checked_at'),
     )
 
+class KeywordHistory(Base):
+    """关键词历史记录表"""
+    __tablename__ = 'keyword_history'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    keyword = Column(String, nullable=False)  # 关键词
+    source = Column(String)  # 来源（ai_generator, data_scraping, smart_filter, subreddit_recommendation, auto_scheduler等）
+    created_at = Column(DateTime, default=datetime.utcnow)  # 创建时间
+    usage_count = Column(Integer, default=1)  # 使用次数
+    last_used_at = Column(DateTime, default=datetime.utcnow)  # 最后使用时间
+    
+    __table_args__ = (
+        Index('idx_keyword_history_keyword', 'keyword'),
+        Index('idx_keyword_history_source', 'source'),
+        Index('idx_keyword_history_created_at', 'created_at'),
+    )
+
+class SubredditHistory(Base):
+    """子版块历史记录表（自动去重收录）"""
+    __tablename__ = 'subreddit_history'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subreddit_name = Column(String, nullable=False)  # 子版块名称（不含r/前缀）
+    source = Column(String)  # 来源（subreddit_recommendation: 智能推荐, ai_generator: AI生成）
+    match_score = Column(Float)  # 匹配度分数
+    heat_score = Column(Float)  # 热度分数（仅AI生成）
+    combined_score = Column(Float)  # 综合分数（仅AI生成）
+    rank = Column(Integer)  # 排名（1-5 for 智能推荐, 1-3 for AI生成）
+    created_at = Column(DateTime, default=datetime.utcnow)  # 创建时间
+    usage_count = Column(Integer, default=1)  # 使用次数（被推荐的次数）
+    last_used_at = Column(DateTime, default=datetime.utcnow)  # 最后使用时间
+    
+    __table_args__ = (
+        Index('idx_subreddit_history_name', 'subreddit_name'),
+        Index('idx_subreddit_history_source', 'source'),
+        Index('idx_subreddit_history_created_at', 'created_at'),
+    )
+
+class UploadedFile(Base):
+    """上传文件表（与Reddit数据隔离）"""
+    __tablename__ = 'uploaded_files'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    filename = Column(String, nullable=False)
+    file_type = Column(String, nullable=False)  # 'text' 或 'image'
+    file_path = Column(String, nullable=False)  # 文件存储路径
+    file_size = Column(Integer)  # 文件大小（字节）
+    description = Column(Text)  # 文件描述
+    content_preview = Column(Text)  # 文本内容预览（仅文本文件）
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_uploaded_file_type', 'file_type'),
+        Index('idx_uploaded_at', 'uploaded_at'),
+    )
+
+class PostScoring(Base):
+    """帖子评分表"""
+    __tablename__ = 'post_scoring'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(String, nullable=False)  # Reddit帖子ID
+    subreddit = Column(String, nullable=False)  # 子版块名称
+    title = Column(Text)  # 帖子标题
+    relevance_score = Column(Float, default=0.0)  # 相关性评分 (0-1)
+    pain_emotion_score = Column(Float, default=0.0)  # 痛点/情感评分 (0-1)
+    timeliness_score = Column(Float, default=0.0)  # 时效性评分 (0-1)
+    activity_score = Column(Float, default=0.0)  # 活跃度评分 (0-1)
+    final_score = Column(Float, default=0.0)  # 最终综合评分 S
+    scored_at = Column(DateTime, default=datetime.utcnow)  # 评分时间
+    
+    __table_args__ = (
+        Index('idx_post_scoring_post_id', 'post_id'),
+        Index('idx_post_scoring_subreddit', 'subreddit'),
+        Index('idx_post_scoring_final_score', 'final_score'),
+        Index('idx_post_scoring_scored_at', 'scored_at'),
+    )
+
+class AutoInteractionQueue(Base):
+    """自动互动队列表"""
+    __tablename__ = 'auto_interaction_queue'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(String, nullable=False)  # Reddit帖子ID
+    subreddit = Column(String, nullable=False)  # 子版块名称
+    interaction_type = Column(String, nullable=False)  # 'deep', 'standard', 'light'
+    post_score = Column(Float, default=0.0)  # 帖子评分（用于排序）
+    status = Column(String, default='pending')  # 'pending', 'executing', 'completed', 'failed'
+    ai_comment = Column(Text)  # AI生成的评论内容（如果是评论互动）
+    requires_review = Column(Boolean, default=False)  # 是否需要人工审核
+    review_status = Column(String)  # 'pending', 'approved', 'rejected'
+    created_at = Column(DateTime, default=datetime.utcnow)  # 创建时间
+    executed_at = Column(DateTime)  # 执行时间
+    error_message = Column(Text)  # 错误信息（如果失败）
+    
+    __table_args__ = (
+        Index('idx_queue_status', 'status'),
+        Index('idx_queue_post_score', 'post_score'),
+        Index('idx_queue_created_at', 'created_at'),
+        Index('idx_queue_review_status', 'review_status'),
+    )
+
+class DailyQuota(Base):
+    """每日配额表"""
+    __tablename__ = 'daily_quota'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    quota_date = Column(DateTime, nullable=False)  # 配额日期
+    deep_interactions = Column(Integer, default=0)  # 深度互动配额
+    standard_interactions = Column(Integer, default=0)  # 标准互动配额
+    light_interactions = Column(Integer, default=0)  # 轻量互动配额
+    deep_used = Column(Integer, default=0)  # 已使用深度互动
+    standard_used = Column(Integer, default=0)  # 已使用标准互动
+    light_used = Column(Integer, default=0)  # 已使用轻量互动
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_quota_date', 'quota_date'),
+    )
+
+class AutoInteractionConfig(Base):
+    """自动化配置表"""
+    __tablename__ = 'auto_interaction_config'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    config_key = Column(String, nullable=False, unique=True)  # 配置键
+    config_value = Column(Text)  # 配置值（JSON字符串）
+    description = Column(Text)  # 配置描述
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_config_key', 'config_key'),
+    )
+
+class AutoInteractionStatus(Base):
+    """自动化运行状态表"""
+    __tablename__ = 'auto_interaction_status'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    is_running = Column(Boolean, default=False)  # 是否正在运行
+    is_paused = Column(Boolean, default=False)  # 是否暂停
+    current_subreddit = Column(String)  # 当前扫描的子版块
+    last_scan_time = Column(DateTime)  # 最后扫描时间
+    last_execution_time = Column(DateTime)  # 最后执行时间
+    total_scanned = Column(Integer, default=0)  # 累计扫描帖子数
+    total_scored = Column(Integer, default=0)  # 累计评分帖子数
+    total_executed = Column(Integer, default=0)  # 累计执行互动数
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_status_is_running', 'is_running'),
+    )
+
+class AutoPostQueue(Base):
+    """自动发帖队列表"""
+    __tablename__ = 'auto_post_queue'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(Text, nullable=False)  # 帖子标题
+    content = Column(Text, nullable=False)  # 帖子内容
+    subreddit = Column(String, nullable=False)  # 子版块名称（单个）
+    flair = Column(String)  # 标签（可选）
+    post_type = Column(String, default='ai_generated')  # 'ai_generated', 'uploaded_text', 'uploaded_image'
+    uploaded_file_id = Column(Integer)  # 关联的上传文件ID（如果是本地上传）
+    image_path = Column(String)  # 图片路径（如果是图片帖子）
+    status = Column(String, default='pending')  # 'pending', 'executing', 'completed', 'failed'
+    requires_review = Column(Boolean, default=False)  # 是否需要人工审核
+    review_status = Column(String)  # 'pending', 'approved', 'rejected'
+    created_at = Column(DateTime, default=datetime.utcnow)  # 创建时间
+    scheduled_at = Column(DateTime)  # 计划发布时间（可选）
+    executed_at = Column(DateTime)  # 执行时间
+    error_message = Column(Text)  # 错误信息（如果失败）
+    reddit_post_id = Column(String)  # Reddit帖子ID（发布成功后）
+    reddit_post_url = Column(String)  # Reddit帖子URL（发布成功后）
+    
+    __table_args__ = (
+        Index('idx_post_queue_status', 'status'),
+        Index('idx_post_queue_subreddit', 'subreddit'),
+        Index('idx_post_queue_created_at', 'created_at'),
+        Index('idx_post_queue_scheduled_at', 'scheduled_at'),
+        Index('idx_post_queue_review_status', 'review_status'),
+    )
+
+class PostContent(Base):
+    """帖子内容表 - 存储准备发布的帖子内容"""
+    __tablename__ = 'post_contents'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    content_type = Column(String, default='text')  # 'text', 'markdown', 'html'
+    media_files = Column(JSON)  # JSON数组，存储媒体文件信息
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    status = Column(String, default='draft')  # 'draft', 'ready', 'scheduled', 'published', 'archived'
+    source = Column(String, default='manual')  # 'manual', 'ai_generated'
+    keywords = Column(Text)  # 关联的关键词（如果是AI生成）
+    is_ai_generated = Column(Boolean, default=False)
+    original_ai_prompt = Column(Text)
+    generation_batch_id = Column(String)  # 同一批生成的帖子
+    edit_history = Column(JSON)  # 编辑历史
+    copy_count = Column(Integer, default=0)
+    
+    __table_args__ = (
+        Index('idx_post_content_status', 'status'),
+        Index('idx_post_content_source', 'source'),
+        Index('idx_post_content_created_at', 'created_at'),
+    )
+
+class PostingSchedule(Base):
+    """发布计划表 - 一个帖子可以发布到多个子版块"""
+    __tablename__ = 'posting_schedules'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_content_id = Column(Integer, nullable=False)  # 关联的帖子内容ID
+    subreddit = Column(String, nullable=False)  # 目标子版块
+    scheduled_time = Column(DateTime, nullable=False)  # 计划发布时间
+    posting_order = Column(Integer, default=0)  # 发布顺序（同一时间的多个子版块）
+    status = Column(String, default='pending')  # 'pending', 'checking', 'approved', 'rejected', 'posting', 'posted', 'failed'
+    rule_check_result = Column(JSON)  # AI规则检查结果
+    posting_result = Column(JSON)  # 发布结果
+    retry_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_schedule_status', 'status'),
+        Index('idx_schedule_subreddit', 'subreddit'),
+        Index('idx_schedule_time', 'scheduled_time'),
+        Index('idx_schedule_content', 'post_content_id'),
+    )
+
+class SubredditRule(Base):
+    """子版块规则缓存表"""
+    __tablename__ = 'subreddit_rules'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    subreddit = Column(String, nullable=False, unique=True)
+    rules_text = Column(Text)
+    rules_summary = Column(Text)  # AI生成的规则摘要
+    last_updated = Column(DateTime, default=datetime.utcnow)
+    rule_version = Column(Integer, default=1)
+    
+    __table_args__ = (
+        Index('idx_subreddit_rule_name', 'subreddit'),
+    )
+
+class PostInteraction(Base):
+    """互动监控表"""
+    __tablename__ = 'post_interactions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    posting_schedule_id = Column(Integer, nullable=False)
+    post_id = Column(String, nullable=False)  # Reddit帖子ID
+    subreddit = Column(String, nullable=False)
+    check_time = Column(DateTime, default=datetime.utcnow)
+    has_interaction = Column(Boolean, default=False)
+    interaction_count = Column(Integer, default=0)  # 评论数+点赞数
+    comment_count = Column(Integer, default=0)
+    upvote_count = Column(Integer, default=0)
+    last_check_at = Column(DateTime, default=datetime.utcnow)
+    next_check_at = Column(DateTime)
+    auto_reply_triggered = Column(Boolean, default=False)
+    auto_reply_count = Column(Integer, default=0)
+    check_count = Column(Integer, default=0)  # 检查次数
+    
+    __table_args__ = (
+        Index('idx_interaction_schedule', 'posting_schedule_id'),
+        Index('idx_interaction_post', 'post_id'),
+        Index('idx_interaction_next_check', 'next_check_at'),
+    )
+
+class AutoReply(Base):
+    """自动回复记录表"""
+    __tablename__ = 'auto_replies'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_interaction_id = Column(Integer, nullable=False)
+    parent_id = Column(String)  # 父评论ID（如果是回复评论）
+    reply_content = Column(Text, nullable=False)
+    reply_type = Column(String, default='top_level')  # 'top_level', 'reply_to_comment'
+    posted_at = Column(DateTime)
+    status = Column(String, default='pending')  # 'pending', 'posted', 'failed'
+    reddit_comment_id = Column(String)  # Reddit评论ID（回复成功后）
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_reply_interaction', 'post_interaction_id'),
+        Index('idx_reply_status', 'status'),
+    )
+
 class DatabaseManager:
     """数据库管理器"""
     
@@ -353,12 +645,27 @@ class DatabaseManager:
         self.ClusteringResult = ClusteringResult
         self.BusinessInsight = BusinessInsight
         self.SubredditIndex = SubredditIndex
+        # 智能发帖相关表
+        self.PostContent = PostContent
+        self.PostingSchedule = PostingSchedule
+        self.SubredditRule = SubredditRule
+        self.PostInteraction = PostInteraction
+        self.AutoReply = AutoReply
         self.UserInteractions = UserInteractions
         self.PostMonitoring = PostMonitoring
         self.InteractionStats = InteractionStats
         self.UserFollows = UserFollows
         self.AccountSnapshots = AccountSnapshots
         self.SubredditReadiness = SubredditReadiness
+        self.UploadedFile = UploadedFile
+        self.PostScoring = PostScoring
+        self.AutoInteractionQueue = AutoInteractionQueue
+        self.DailyQuota = DailyQuota
+        self.AutoInteractionConfig = AutoInteractionConfig
+        self.AutoInteractionStatus = AutoInteractionStatus
+        self.AutoPostQueue = AutoPostQueue
+        self.KeywordHistory = KeywordHistory
+        self.SubredditHistory = SubredditHistory
         
         self.create_tables()
     
@@ -435,6 +742,327 @@ class DatabaseManager:
             return None
         finally:
             session.close()
+    
+    # ==================== 上传文件管理（与Reddit数据隔离） ====================
+    
+    def save_uploaded_file(self, filename: str, file_type: str, file_path: str, file_size: int, 
+                          description: str = None, content_preview: str = None) -> int:
+        """
+        保存上传文件记录
+        
+        Args:
+            filename: 文件名
+            file_type: 文件类型 ('text' 或 'image')
+            file_path: 文件存储路径
+            file_size: 文件大小（字节）
+            description: 文件描述
+            content_preview: 文本内容预览（仅文本文件）
+            
+        Returns:
+            文件记录ID
+        """
+        session = self.get_session()
+        try:
+            uploaded_file = UploadedFile(
+                filename=filename,
+                file_type=file_type,
+                file_path=file_path,
+                file_size=file_size,
+                description=description,
+                content_preview=content_preview,
+                uploaded_at=datetime.utcnow()
+            )
+            session.add(uploaded_file)
+            session.commit()
+            file_id = uploaded_file.id
+            self.logger.info(f"文件上传记录保存成功: {filename} (ID: {file_id})")
+            return file_id
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存上传文件记录失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_uploaded_file(self, file_id: int):
+        """获取上传文件记录"""
+        session = self.get_session()
+        try:
+            file_record = session.query(UploadedFile).filter(UploadedFile.id == file_id).first()
+            if file_record:
+                return {
+                    'id': file_record.id,
+                    'filename': file_record.filename,
+                    'file_type': file_record.file_type,
+                    'file_path': file_record.file_path,
+                    'file_size': file_record.file_size,
+                    'description': file_record.description,
+                    'content_preview': file_record.content_preview,
+                    'uploaded_at': file_record.uploaded_at
+                }
+            return None
+        except Exception as e:
+            self.logger.error(f"获取上传文件记录失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_all_uploaded_files(self, file_type: str = None):
+        """
+        获取所有上传文件记录
+        
+        Args:
+            file_type: 文件类型过滤 ('text' 或 'image')，None表示获取所有类型
+            
+        Returns:
+            文件记录列表
+        """
+        session = self.get_session()
+        try:
+            query = session.query(UploadedFile)
+            if file_type:
+                query = query.filter(UploadedFile.file_type == file_type)
+            
+            files = query.order_by(UploadedFile.uploaded_at.desc()).all()
+            return [
+                {
+                    'id': f.id,
+                    'filename': f.filename,
+                    'file_type': f.file_type,
+                    'file_path': f.file_path,
+                    'file_size': f.file_size,
+                    'description': f.description,
+                    'content_preview': f.content_preview,
+                    'uploaded_at': f.uploaded_at
+                }
+                for f in files
+            ]
+        except Exception as e:
+            self.logger.error(f"获取上传文件列表失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def delete_uploaded_file(self, file_id: int) -> bool:
+        """
+        删除上传文件记录（不删除实际文件，需要手动删除文件）
+        
+        Args:
+            file_id: 文件记录ID
+            
+        Returns:
+            是否删除成功
+        """
+        session = self.get_session()
+        try:
+            file_record = session.query(UploadedFile).filter(UploadedFile.id == file_id).first()
+            if file_record:
+                session.delete(file_record)
+                session.commit()
+                self.logger.info(f"文件记录删除成功: ID {file_id}")
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"删除文件记录失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def save_keyword_to_history(self, keyword: str, source: str = "unknown"):
+        """
+        保存关键词到历史记录（自动去重，不考虑来源）
+        
+        Args:
+            keyword: 关键词（单个关键词，不是逗号分隔的字符串）
+            source: 来源（ai_generator, data_scraping, smart_filter, subreddit_recommendation, auto_scheduler等）
+        """
+        if not keyword or not keyword.strip():
+            return
+        
+        keyword = keyword.strip()
+        session = self.get_session()
+        try:
+            # 查找是否已存在相同关键词（不考虑来源，实现自动去重）
+            existing = session.query(KeywordHistory).filter(
+                KeywordHistory.keyword == keyword
+            ).first()
+            
+            if existing:
+                # 更新使用次数和最后使用时间
+                existing.usage_count += 1
+                existing.last_used_at = datetime.utcnow()
+                
+                # 如果来源不同，合并来源信息（用逗号分隔多个来源）
+                if source and source != "unknown" and source not in (existing.source or ""):
+                    if existing.source:
+                        # 检查来源是否已包含当前来源
+                        existing_sources = [s.strip() for s in existing.source.split(',')]
+                        if source not in existing_sources:
+                            existing.source = existing.source + f", {source}"
+                    else:
+                        existing.source = source
+            else:
+                # 创建新记录
+                new_record = KeywordHistory(
+                    keyword=keyword,
+                    source=source,
+                    usage_count=1,
+                    last_used_at=datetime.utcnow()
+                )
+                session.add(new_record)
+            
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存关键词到历史记录失败: {str(e)}")
+        finally:
+            session.close()
+    
+    def save_keywords_to_history(self, keywords: str, source: str = "unknown"):
+        """
+        保存多个关键词到历史记录（支持逗号分隔、换行分隔等）
+        
+        Args:
+            keywords: 关键词字符串（可以是逗号分隔、换行分隔等）
+            source: 来源
+        """
+        if not keywords or not keywords.strip():
+            return
+        
+        # 解析关键词（支持逗号、换行、空格分隔）
+        import re
+        # 先按换行分割
+        lines = keywords.split('\n')
+        keyword_list = []
+        for line in lines:
+            # 再按逗号分割
+            parts = line.split(',')
+            for part in parts:
+                # 再按空格分割（处理多个空格分隔的关键词）
+                words = re.split(r'\s+', part.strip())
+                for word in words:
+                    if word.strip():
+                        keyword_list.append(word.strip())
+        
+        # 去重并保存
+        unique_keywords = list(set(keyword_list))
+        for keyword in unique_keywords:
+            self.save_keyword_to_history(keyword, source)
+    
+    def save_subreddit_to_history(self, subreddit_name: str, source: str = "unknown", 
+                                   match_score: float = None, heat_score: float = None, 
+                                   combined_score: float = None, rank: int = None):
+        """
+        保存子版块到历史记录（自动去重，不考虑来源）
+        
+        Args:
+            subreddit_name: 子版块名称（不含r/前缀）
+            source: 来源（subreddit_recommendation: 智能推荐, ai_generator: AI生成）
+            match_score: 匹配度分数
+            heat_score: 热度分数（仅AI生成）
+            combined_score: 综合分数（仅AI生成）
+            rank: 排名（1-5 for 智能推荐, 1-3 for AI生成）
+        """
+        if not subreddit_name or not subreddit_name.strip():
+            return
+        
+        # 清理子版块名称（移除r/前缀和空格）
+        subreddit_name = subreddit_name.strip().lstrip('r/').strip()
+        if not subreddit_name:
+            return
+        
+        session = self.get_session()
+        try:
+            # 查找是否已存在相同子版块（不考虑来源，实现自动去重）
+            existing = session.query(SubredditHistory).filter(
+                SubredditHistory.subreddit_name == subreddit_name
+            ).first()
+            
+            if existing:
+                # 更新使用次数和最后使用时间
+                existing.usage_count += 1
+                existing.last_used_at = datetime.utcnow()
+                
+                # 如果来源不同，合并来源信息（用逗号分隔多个来源）
+                if source and source != "unknown" and source not in (existing.source or ""):
+                    if existing.source:
+                        existing_sources = [s.strip() for s in existing.source.split(',')]
+                        if source not in existing_sources:
+                            existing.source = existing.source + f", {source}"
+                    else:
+                        existing.source = source
+                
+                # 更新分数信息（保留最高的分数）
+                if match_score is not None and (existing.match_score is None or match_score > existing.match_score):
+                    existing.match_score = match_score
+                if heat_score is not None and (existing.heat_score is None or heat_score > existing.heat_score):
+                    existing.heat_score = heat_score
+                if combined_score is not None and (existing.combined_score is None or combined_score > existing.combined_score):
+                    existing.combined_score = combined_score
+                if rank is not None and (existing.rank is None or rank < existing.rank):
+                    existing.rank = rank  # 保留更小的排名（更靠前）
+            else:
+                # 创建新记录
+                new_record = SubredditHistory(
+                    subreddit_name=subreddit_name,
+                    source=source,
+                    match_score=match_score,
+                    heat_score=heat_score,
+                    combined_score=combined_score,
+                    rank=rank,
+                    usage_count=1,
+                    last_used_at=datetime.utcnow()
+                )
+                session.add(new_record)
+            
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存子版块到历史记录失败: {str(e)}")
+        finally:
+            session.close()
+    
+    def save_subreddits_to_history(self, subreddits: List[Dict[str, Any]], source: str, top_n: int = None):
+        """
+        批量保存子版块到历史记录
+        
+        Args:
+            subreddits: 子版块列表，每个元素包含子版块信息
+            source: 来源（subreddit_recommendation: 智能推荐, ai_generator: AI生成）
+            top_n: 只保存前N个（如果指定）
+        """
+        if not subreddits:
+            return
+        
+        # 如果指定了top_n，只保存前N个
+        if top_n:
+            subreddits = subreddits[:top_n]
+        
+        for idx, subreddit_info in enumerate(subreddits, 1):
+            # 提取子版块名称（支持多种格式）
+            subreddit_name = subreddit_info.get('subreddit') or subreddit_info.get('subreddit_name') or subreddit_info.get('name', '')
+            if not subreddit_name:
+                continue
+            
+            # 提取分数信息
+            match_score = subreddit_info.get('match_score') or subreddit_info.get('score')
+            heat_score = subreddit_info.get('heat_score')
+            combined_score = subreddit_info.get('combined_score')
+            rank = idx  # 使用索引作为排名
+            
+            # 如果match_score是百分比，转换为0-100的分数
+            if match_score is not None and isinstance(match_score, float) and match_score <= 1.0:
+                match_score = match_score * 100
+            
+            self.save_subreddit_to_history(
+                subreddit_name=subreddit_name,
+                source=source,
+                match_score=match_score,
+                heat_score=heat_score,
+                combined_score=combined_score,
+                rank=rank
+            )
     
     def get_session(self):
         """获取数据库会话"""
@@ -1417,6 +2045,143 @@ class DatabaseManager:
         finally:
             session.close()
     
+    def get_posts_by_search_query(self, search_query: str) -> List:
+        """
+        根据搜索关键词获取帖子数据
+        
+        Args:
+            search_query: 搜索关键词
+            
+        Returns:
+            符合条件的帖子列表
+        """
+        session = self.get_session()
+        try:
+            query = session.query(RedditPost).filter(RedditPost.search_query == search_query)
+            posts = query.all()
+            self.logger.info(f"查询关键词 '{search_query}' 找到 {len(posts)} 个帖子")
+            return posts
+        except Exception as e:
+            self.logger.error(f"查询关键词帖子失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def get_all_search_queries(self) -> List[str]:
+        """
+        获取所有已使用的搜索关键词
+        
+        Returns:
+            搜索关键词列表（去重）
+        """
+        session = self.get_session()
+        try:
+            queries = session.query(distinct(RedditPost.search_query)).filter(
+                RedditPost.search_query.isnot(None),
+                RedditPost.search_query != ''
+            ).all()
+            search_queries = [q[0] for q in queries if q[0]]
+            self.logger.info(f"找到 {len(search_queries)} 个不同的搜索关键词")
+            return search_queries
+        except Exception as e:
+            self.logger.error(f"获取搜索关键词列表失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def analyze_subreddit_heat_by_keyword(self, search_query: str) -> List[Dict[str, Any]]:
+        """
+        分析指定关键词下各子版块的热度
+        
+        Args:
+            search_query: 搜索关键词
+            
+        Returns:
+            子版块热度统计列表，包含：
+            - subreddit: 子版块名称
+            - post_count: 帖子数量
+            - total_score: 总分数
+            - avg_score: 平均分数
+            - total_comments: 总评论数
+            - avg_comments: 平均评论数
+            - heat_score: 热度评分（综合指标）
+        """
+        session = self.get_session()
+        try:
+            # 查询该关键词下的所有帖子
+            posts = session.query(RedditPost).filter(
+                RedditPost.search_query == search_query
+            ).all()
+            
+            if not posts:
+                return []
+            
+            # 按子版块分组统计
+            subreddit_stats = {}
+            for post in posts:
+                subreddit = post.subreddit
+                if subreddit not in subreddit_stats:
+                    subreddit_stats[subreddit] = {
+                        'subreddit': subreddit,
+                        'post_count': 0,
+                        'total_score': 0,
+                        'total_comments': 0,
+                        'scores': [],
+                        'comments': []
+                    }
+                
+                stats = subreddit_stats[subreddit]
+                stats['post_count'] += 1
+                stats['total_score'] += (post.score or 0)
+                stats['total_comments'] += (post.num_comments or 0)
+                stats['scores'].append(post.score or 0)
+                stats['comments'].append(post.num_comments or 0)
+            
+            # 计算统计指标
+            results = []
+            for subreddit, stats in subreddit_stats.items():
+                post_count = stats['post_count']
+                avg_score = stats['total_score'] / post_count if post_count > 0 else 0
+                avg_comments = stats['total_comments'] / post_count if post_count > 0 else 0
+                
+                # 计算热度评分（综合多个指标）
+                # 热度 = (帖子数量权重 * 0.3 + 平均分数权重 * 0.4 + 平均评论数权重 * 0.3)
+                max_posts = max([s['post_count'] for s in subreddit_stats.values()]) or 1
+                max_avg_score = max([s['total_score'] / s['post_count'] for s in subreddit_stats.values() if s['post_count'] > 0]) or 1
+                max_avg_comments = max([s['total_comments'] / s['post_count'] for s in subreddit_stats.values() if s['post_count'] > 0]) or 1
+                
+                post_count_weight = (post_count / max_posts) if max_posts > 0 else 0
+                avg_score_weight = (avg_score / max_avg_score) if max_avg_score > 0 else 0
+                avg_comments_weight = (avg_comments / max_avg_comments) if max_avg_comments > 0 else 0
+                
+                heat_score = (
+                    post_count_weight * 0.3 +
+                    avg_score_weight * 0.4 +
+                    avg_comments_weight * 0.3
+                ) * 100  # 转换为0-100分
+                
+                results.append({
+                    'subreddit': subreddit,
+                    'post_count': post_count,
+                    'total_score': stats['total_score'],
+                    'avg_score': round(avg_score, 2),
+                    'total_comments': stats['total_comments'],
+                    'avg_comments': round(avg_comments, 2),
+                    'heat_score': round(heat_score, 2)
+                })
+            
+            # 按热度评分排序
+            results.sort(key=lambda x: x['heat_score'], reverse=True)
+            
+            self.logger.info(f"关键词 '{search_query}' 热度分析完成，找到 {len(results)} 个子版块")
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"分析子版块热度失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
     def get_comments_by_post_id(self, post_id: str):
         """从本地数据库获取指定帖子的评论"""
         session = self.get_session()
@@ -1565,6 +2330,783 @@ class DatabaseManager:
             session.rollback()
             self.logger.error(f"删除子版块索引失败: {str(e)}")
             return False
+        finally:
+            session.close()
+    
+    # ==================== 自动化运营相关 ====================
+    
+    def save_post_scoring(self, post_id: str, subreddit: str, title: str, 
+                         relevance_score: float, pain_emotion_score: float,
+                         timeliness_score: float, activity_score: float,
+                         final_score: float) -> int:
+        """保存帖子评分"""
+        session = self.get_session()
+        try:
+            # 检查是否已存在
+            existing = session.query(PostScoring).filter(PostScoring.post_id == post_id).first()
+            if existing:
+                # 更新现有记录
+                existing.subreddit = subreddit
+                existing.title = title
+                existing.relevance_score = relevance_score
+                existing.pain_emotion_score = pain_emotion_score
+                existing.timeliness_score = timeliness_score
+                existing.activity_score = activity_score
+                existing.final_score = final_score
+                existing.scored_at = datetime.utcnow()
+                session.commit()
+                return existing.id
+            else:
+                # 创建新记录
+                scoring = PostScoring(
+                    post_id=post_id,
+                    subreddit=subreddit,
+                    title=title,
+                    relevance_score=relevance_score,
+                    pain_emotion_score=pain_emotion_score,
+                    timeliness_score=timeliness_score,
+                    activity_score=activity_score,
+                    final_score=final_score,
+                    scored_at=datetime.utcnow()
+                )
+                session.add(scoring)
+                session.commit()
+                return scoring.id
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"保存帖子评分失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_post_scorings(self, subreddit: str = None, min_score: float = None, limit: int = 100):
+        """获取帖子评分列表（返回字典列表，避免session依赖）"""
+        session = self.get_session()
+        try:
+            query = session.query(PostScoring)
+            if subreddit:
+                query = query.filter(PostScoring.subreddit == subreddit)
+            if min_score is not None:
+                query = query.filter(PostScoring.final_score >= min_score)
+            scorings = query.order_by(PostScoring.final_score.desc()).limit(limit).all()
+            # 转换为字典列表
+            result = []
+            for scoring in scorings:
+                result.append({
+                    'id': scoring.id,
+                    'post_id': scoring.post_id,
+                    'subreddit': scoring.subreddit,
+                    'title': scoring.title,
+                    'relevance_score': scoring.relevance_score,
+                    'pain_emotion_score': scoring.pain_emotion_score,
+                    'timeliness_score': scoring.timeliness_score,
+                    'activity_score': scoring.activity_score,
+                    'final_score': scoring.final_score,
+                    'scored_at': scoring.scored_at
+                })
+            return result
+        except Exception as e:
+            self.logger.error(f"获取帖子评分失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def add_to_interaction_queue(self, post_id: str, subreddit: str, interaction_type: str,
+                                 post_score: float, ai_comment: str = None,
+                                 requires_review: bool = False) -> int:
+        """添加到互动队列"""
+        session = self.get_session()
+        try:
+            # 检查是否已存在待执行的相同任务
+            existing = session.query(AutoInteractionQueue).filter(
+                AutoInteractionQueue.post_id == post_id,
+                AutoInteractionQueue.status == 'pending'
+            ).first()
+            if existing:
+                return existing.id
+            
+            queue_item = AutoInteractionQueue(
+                post_id=post_id,
+                subreddit=subreddit,
+                interaction_type=interaction_type,
+                post_score=post_score,
+                ai_comment=ai_comment,
+                status='pending',  # 显式设置状态为pending
+                requires_review=requires_review,
+                review_status='pending' if requires_review else None,
+                created_at=datetime.utcnow()
+            )
+            session.add(queue_item)
+            session.commit()
+            return queue_item.id
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"添加到互动队列失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_pending_interactions(self, limit: int = 50, interaction_type: str = None):
+        """
+        获取待执行的互动任务（按评分排序，返回字典列表，避免session依赖）
+        
+        Args:
+            limit: 返回数量限制
+            interaction_type: 可选，按互动类型筛选（'deep', 'standard', 'light'）
+        """
+        from sqlalchemy import or_
+        session = self.get_session()
+        try:
+            query = session.query(AutoInteractionQueue).filter(
+                AutoInteractionQueue.status == 'pending',
+                # 自动执行：允许 pending/approved/None，只排除明确被拒绝(rejected)的任务
+                or_(
+                    AutoInteractionQueue.review_status.is_(None),
+                    AutoInteractionQueue.review_status != 'rejected'
+                )
+            )
+            
+            # 如果指定了互动类型，添加筛选条件
+            if interaction_type:
+                query = query.filter(AutoInteractionQueue.interaction_type == interaction_type)
+            
+            tasks = query.order_by(AutoInteractionQueue.post_score.desc()).limit(limit).all()
+            # 转换为字典列表
+            result = []
+            for task in tasks:
+                result.append({
+                    'id': task.id,
+                    'post_id': task.post_id,
+                    'subreddit': task.subreddit,
+                    'interaction_type': task.interaction_type,
+                    'post_score': task.post_score,
+                    'status': task.status,
+                    'ai_comment': task.ai_comment,
+                    'requires_review': task.requires_review,
+                    'review_status': task.review_status,
+                    'created_at': task.created_at,
+                    'executed_at': task.executed_at,
+                    'error_message': task.error_message
+                })
+            return result
+        except Exception as e:
+            self.logger.error(f"获取待执行互动失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def update_interaction_status(self, queue_id: int, status: str, error_message: str = None):
+        """更新互动任务状态"""
+        session = self.get_session()
+        try:
+            queue_item = session.query(AutoInteractionQueue).filter(AutoInteractionQueue.id == queue_id).first()
+            if queue_item:
+                queue_item.status = status
+                if status == 'completed':
+                    queue_item.executed_at = datetime.utcnow()
+                if error_message:
+                    queue_item.error_message = error_message
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"更新互动状态失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def reset_failed_tasks(self, reset_executing: bool = True) -> int:
+        """
+        重置失败和卡住的任务为pending状态
+        
+        Args:
+            reset_executing: 是否也重置executing状态的任务（卡住的任务）
+            
+        Returns:
+            重置的任务数量
+        """
+        session = self.get_session()
+        try:
+            # 重置failed状态的任务
+            failed_tasks = session.query(AutoInteractionQueue).filter(
+                AutoInteractionQueue.status == 'failed'
+            ).all()
+            
+            # 重置executing状态的任务（如果启用）
+            executing_tasks = []
+            if reset_executing:
+                executing_tasks = session.query(AutoInteractionQueue).filter(
+                    AutoInteractionQueue.status == 'executing'
+                ).all()
+            
+            reset_count = 0
+            for task in failed_tasks + executing_tasks:
+                task.status = 'pending'
+                task.error_message = None  # 清除错误信息
+                task.executed_at = None  # 清除执行时间
+                reset_count += 1
+            
+            session.commit()
+            return reset_count
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"重置失败任务失败: {str(e)}")
+            return 0
+        finally:
+            session.close()
+    
+    def reset_auto_operation(self, clear_all_tasks: bool = True, reset_statistics: bool = True, clear_activity_logs: bool = True) -> Dict[str, Any]:
+        """
+        完全重置自动运营功能
+        
+        Args:
+            clear_all_tasks: 是否清理所有任务（包括pending、executing、failed，但保留completed用于历史记录）
+            reset_statistics: 是否重置运行状态统计
+            clear_activity_logs: 是否清理活动日志
+            
+        Returns:
+            重置结果统计
+        """
+        session = self.get_session()
+        result = {
+            'tasks_deleted': 0,
+            'tasks_reset': 0,
+            'statistics_reset': False,
+            'logs_cleared': False
+        }
+        
+        try:
+            # 1. 停止运行状态
+            status = session.query(AutoInteractionStatus).order_by(AutoInteractionStatus.id.desc()).first()
+            if status:
+                status.is_running = False
+                status.is_paused = False
+                status.current_subreddit = None
+                status.last_scan_time = None
+                status.last_execution_time = None
+            
+            # 2. 清理任务
+            if clear_all_tasks:
+                # 删除所有非completed状态的任务（保留已完成的任务作为历史记录）
+                deleted = session.query(AutoInteractionQueue).filter(
+                    AutoInteractionQueue.status.in_(['pending', 'executing', 'failed'])
+                ).delete()
+                result['tasks_deleted'] = deleted
+                
+                # 重置executing状态的任务为pending（如果还有的话）
+                executing_tasks = session.query(AutoInteractionQueue).filter(
+                    AutoInteractionQueue.status == 'executing'
+                ).all()
+                for task in executing_tasks:
+                    task.status = 'pending'
+                    task.error_message = None
+                    task.executed_at = None
+                result['tasks_reset'] = len(executing_tasks)
+            
+            # 3. 重置统计信息
+            if reset_statistics and status:
+                status.total_scanned = 0
+                status.total_scored = 0
+                status.total_executed = 0
+                result['statistics_reset'] = True
+            
+            # 4. 清理活动日志
+            if clear_activity_logs:
+                # 清理存储在配置中的活动日志
+                config = session.query(AutoInteractionConfig).filter(
+                    AutoInteractionConfig.config_key == 'auto_activity_logs'
+                ).first()
+                if config:
+                    config.config_value = '[]'
+                    result['logs_cleared'] = True
+            
+            session.commit()
+            return result
+            
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"重置自动运营功能失败: {str(e)}")
+            raise
+        finally:
+            session.close()
+    
+    def get_pending_reviews(self):
+        """获取待审核的评论（返回字典列表，避免session依赖）"""
+        session = self.get_session()
+        try:
+            reviews = session.query(AutoInteractionQueue).filter(
+                AutoInteractionQueue.requires_review == True,
+                AutoInteractionQueue.review_status == 'pending'
+            ).order_by(AutoInteractionQueue.created_at.desc()).all()
+            # 转换为字典列表
+            result = []
+            for review in reviews:
+                result.append({
+                    'id': review.id,
+                    'post_id': review.post_id,
+                    'subreddit': review.subreddit,
+                    'interaction_type': review.interaction_type,
+                    'post_score': review.post_score,
+                    'status': review.status,
+                    'ai_comment': review.ai_comment,
+                    'requires_review': review.requires_review,
+                    'review_status': review.review_status,
+                    'created_at': review.created_at,
+                    'executed_at': review.executed_at,
+                    'error_message': review.error_message
+                })
+            return result
+        except Exception as e:
+            self.logger.error(f"获取待审核评论失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def update_review_status(self, queue_id: int, review_status: str):
+        """更新审核状态"""
+        session = self.get_session()
+        try:
+            queue_item = session.query(AutoInteractionQueue).filter(AutoInteractionQueue.id == queue_id).first()
+            if queue_item:
+                queue_item.review_status = review_status
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"更新审核状态失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_daily_quota(self, quota_date: datetime = None):
+        """获取每日配额（如果不存在则创建，返回字典，避免session依赖）"""
+        if quota_date is None:
+            quota_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            quota_date = quota_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        session = self.get_session()
+        try:
+            quota = session.query(DailyQuota).filter(
+                func.date(DailyQuota.quota_date) == quota_date.date()
+            ).first()
+            
+            if not quota:
+                # 创建默认配额
+                quota = DailyQuota(
+                    quota_date=quota_date,
+                    deep_interactions=0,
+                    standard_interactions=0,
+                    light_interactions=0,
+                    deep_used=0,
+                    standard_used=0,
+                    light_used=0
+                )
+                session.add(quota)
+                session.commit()
+            
+            # 在session关闭前访问所有属性，转换为字典
+            result = {
+                'id': quota.id,
+                'quota_date': quota.quota_date,
+                'deep_interactions': quota.deep_interactions,
+                'standard_interactions': quota.standard_interactions,
+                'light_interactions': quota.light_interactions,
+                'deep_used': quota.deep_used,
+                'standard_used': quota.standard_used,
+                'light_used': quota.light_used,
+                'updated_at': quota.updated_at
+            }
+            return result
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"获取每日配额失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def update_daily_quota(self, quota_date: datetime, deep: int = None, standard: int = None, light: int = None):
+        """更新每日配额"""
+        quota_date = quota_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        session = self.get_session()
+        try:
+            quota = session.query(DailyQuota).filter(
+                func.date(DailyQuota.quota_date) == quota_date.date()
+            ).first()
+            
+            if not quota:
+                quota = DailyQuota(quota_date=quota_date)
+                session.add(quota)
+            
+            if deep is not None:
+                quota.deep_interactions = deep
+            if standard is not None:
+                quota.standard_interactions = standard
+            if light is not None:
+                quota.light_interactions = light
+            
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"更新每日配额失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def increment_quota_used(self, quota_date: datetime, interaction_type: str):
+        """增加配额使用量"""
+        quota_date = quota_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        session = self.get_session()
+        try:
+            quota = session.query(DailyQuota).filter(
+                func.date(DailyQuota.quota_date) == quota_date.date()
+            ).first()
+            
+            if quota:
+                if interaction_type == 'deep':
+                    quota.deep_used += 1
+                elif interaction_type == 'standard':
+                    quota.standard_used += 1
+                elif interaction_type == 'light':
+                    quota.light_used += 1
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"增加配额使用量失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_config(self, config_key: str, default_value: str = None):
+        """获取配置值"""
+        session = self.get_session()
+        try:
+            config = session.query(AutoInteractionConfig).filter(
+                AutoInteractionConfig.config_key == config_key
+            ).first()
+            if config:
+                return config.config_value
+            return default_value
+        except Exception as e:
+            self.logger.error(f"获取配置失败: {str(e)}")
+            return default_value
+        finally:
+            session.close()
+    
+    def set_config(self, config_key: str, config_value: str, description: str = None):
+        """设置配置值"""
+        session = self.get_session()
+        try:
+            config = session.query(AutoInteractionConfig).filter(
+                AutoInteractionConfig.config_key == config_key
+            ).first()
+            
+            if config:
+                config.config_value = config_value
+                if description:
+                    config.description = description
+                config.updated_at = datetime.utcnow()
+            else:
+                config = AutoInteractionConfig(
+                    config_key=config_key,
+                    config_value=config_value,
+                    description=description,
+                    updated_at=datetime.utcnow()
+                )
+                session.add(config)
+            
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"设置配置失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def get_status(self):
+        """获取运行状态（返回字典，避免session依赖）"""
+        session = self.get_session()
+        try:
+            status = session.query(AutoInteractionStatus).order_by(AutoInteractionStatus.id.desc()).first()
+            if not status:
+                # 创建默认状态
+                status = AutoInteractionStatus(
+                    is_running=False,
+                    is_paused=False,
+                    total_scanned=0,
+                    total_scored=0,
+                    total_executed=0
+                )
+                session.add(status)
+                session.commit()
+            
+            # 在session关闭前访问所有属性，转换为字典
+            result = {
+                'id': status.id,
+                'is_running': status.is_running,
+                'is_paused': status.is_paused,
+                'current_subreddit': status.current_subreddit,
+                'last_scan_time': status.last_scan_time,
+                'last_execution_time': status.last_execution_time,
+                'total_scanned': status.total_scanned,
+                'total_scored': status.total_scored,
+                'total_executed': status.total_executed,
+                'updated_at': status.updated_at
+            }
+            return result
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"获取运行状态失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def update_status(self, is_running: bool = None, is_paused: bool = None,
+                     current_subreddit: str = None, last_scan_time: datetime = None,
+                     last_execution_time: datetime = None, total_scanned: int = None,
+                     total_scored: int = None, total_executed: int = None):
+        """更新运行状态"""
+        session = self.get_session()
+        try:
+            status = session.query(AutoInteractionStatus).order_by(AutoInteractionStatus.id.desc()).first()
+            if not status:
+                status = AutoInteractionStatus()
+                session.add(status)
+            
+            if is_running is not None:
+                status.is_running = is_running
+            if is_paused is not None:
+                status.is_paused = is_paused
+            if current_subreddit is not None:
+                status.current_subreddit = current_subreddit
+            if last_scan_time is not None:
+                status.last_scan_time = last_scan_time
+            if last_execution_time is not None:
+                status.last_execution_time = last_execution_time
+            if total_scanned is not None:
+                status.total_scanned = total_scanned
+            if total_scored is not None:
+                status.total_scored = total_scored
+            if total_executed is not None:
+                status.total_executed = total_executed
+            
+            status.updated_at = datetime.utcnow()
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"更新运行状态失败: {str(e)}")
+            return False
+        finally:
+            session.close()
+    
+    def add_to_post_queue(self, title: str, content: str, subreddit: str, 
+                         flair: str = None, post_type: str = 'ai_generated',
+                         uploaded_file_id: int = None, image_path: str = None,
+                         scheduled_at: datetime = None, requires_review: bool = False) -> int:
+        """
+        添加发帖任务到队列
+        
+        Args:
+            title: 帖子标题
+            content: 帖子内容
+            subreddit: 子版块名称
+            flair: 标签（可选）
+            post_type: 帖子类型 ('ai_generated', 'uploaded_text', 'uploaded_image')
+            uploaded_file_id: 关联的上传文件ID
+            image_path: 图片路径
+            scheduled_at: 计划发布时间
+            requires_review: 是否需要审核
+            
+        Returns:
+            任务ID
+        """
+        session = self.get_session()
+        try:
+            post_task = AutoPostQueue(
+                title=title,
+                content=content,
+                subreddit=subreddit,
+                flair=flair,
+                post_type=post_type,
+                uploaded_file_id=uploaded_file_id,
+                image_path=image_path,
+                scheduled_at=scheduled_at,
+                requires_review=requires_review,
+                status='pending',
+                review_status='pending' if requires_review else None
+            )
+            session.add(post_task)
+            session.commit()
+            task_id = post_task.id
+            self.logger.info(f"发帖任务已加入队列: {task_id} (r/{subreddit})")
+            return task_id
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"添加发帖任务到队列失败: {str(e)}")
+            return None
+        finally:
+            session.close()
+    
+    def get_pending_posts(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        获取待执行的发帖任务
+        
+        Args:
+            limit: 返回数量限制
+            
+        Returns:
+            待执行任务列表
+        """
+        session = self.get_session()
+        try:
+            from sqlalchemy import or_
+            # 获取待执行的任务（pending状态，且审核通过或无需审核）
+            query = session.query(AutoPostQueue).filter(
+                AutoPostQueue.status == 'pending'
+            ).filter(
+                or_(
+                    AutoPostQueue.review_status == 'approved',
+                    AutoPostQueue.review_status.is_(None),
+                    AutoPostQueue.requires_review == False
+                )
+            )
+            
+            # 如果有计划发布时间，只获取到期的任务
+            from datetime import datetime
+            now = datetime.utcnow()
+            query = query.filter(
+                or_(
+                    AutoPostQueue.scheduled_at.is_(None),
+                    AutoPostQueue.scheduled_at <= now
+                )
+            )
+            
+            tasks = query.order_by(AutoPostQueue.created_at.asc()).limit(limit).all()
+            
+            result = []
+            for task in tasks:
+                result.append({
+                    'id': task.id,
+                    'title': task.title,
+                    'content': task.content,
+                    'subreddit': task.subreddit,
+                    'flair': task.flair,
+                    'post_type': task.post_type,
+                    'uploaded_file_id': task.uploaded_file_id,
+                    'image_path': task.image_path,
+                    'status': task.status,
+                    'scheduled_at': task.scheduled_at,
+                    'created_at': task.created_at
+                })
+            return result
+        except Exception as e:
+            self.logger.error(f"获取待执行发帖任务失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def update_post_task_status(self, task_id: int, status: str, 
+                               reddit_post_id: str = None, reddit_post_url: str = None,
+                               error_message: str = None):
+        """
+        更新发帖任务状态
+        
+        Args:
+            task_id: 任务ID
+            status: 新状态 ('executing', 'completed', 'failed')
+            reddit_post_id: Reddit帖子ID（成功时）
+            reddit_post_url: Reddit帖子URL（成功时）
+            error_message: 错误信息（失败时）
+        """
+        session = self.get_session()
+        try:
+            task = session.query(AutoPostQueue).filter_by(id=task_id).first()
+            if task:
+                task.status = status
+                if status == 'completed':
+                    task.executed_at = datetime.utcnow()
+                    if reddit_post_id:
+                        task.reddit_post_id = reddit_post_id
+                    if reddit_post_url:
+                        task.reddit_post_url = reddit_post_url
+                elif status == 'failed':
+                    task.executed_at = datetime.utcnow()
+                    if error_message:
+                        task.error_message = error_message
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            self.logger.error(f"更新发帖任务状态失败: {str(e)}")
+        finally:
+            session.close()
+    
+    def get_post_history(self, limit: int = 50, status: str = None):
+        """获取发帖历史记录（返回字典列表，避免session依赖）"""
+        session = self.get_session()
+        try:
+            query = session.query(AutoPostQueue)
+            if status:
+                query = query.filter(AutoPostQueue.status == status)
+            history = query.order_by(AutoPostQueue.executed_at.desc()).limit(limit).all()
+            # 转换为字典列表
+            result = []
+            for h in history:
+                result.append({
+                    'id': h.id,
+                    'title': h.title,
+                    'subreddit': h.subreddit,
+                    'post_type': h.post_type,
+                    'status': h.status,
+                    'flair': h.flair,
+                    'reddit_post_id': h.reddit_post_id,
+                    'reddit_post_url': h.reddit_post_url,
+                    'created_at': h.created_at,
+                    'executed_at': h.executed_at,
+                    'error_message': h.error_message
+                })
+            return result
+        except Exception as e:
+            self.logger.error(f"获取发帖历史失败: {str(e)}")
+            return []
+        finally:
+            session.close()
+    
+    def get_interaction_history(self, limit: int = 50, status: str = None):
+        """获取互动历史记录（返回字典列表，避免session依赖）"""
+        session = self.get_session()
+        try:
+            query = session.query(AutoInteractionQueue)
+            if status:
+                query = query.filter(AutoInteractionQueue.status == status)
+            history = query.order_by(AutoInteractionQueue.executed_at.desc()).limit(limit).all()
+            # 转换为字典列表
+            result = []
+            for h in history:
+                result.append({
+                    'id': h.id,
+                    'post_id': h.post_id,
+                    'subreddit': h.subreddit,
+                    'interaction_type': h.interaction_type,
+                    'post_score': h.post_score,
+                    'status': h.status,
+                    'ai_comment': h.ai_comment,
+                    'requires_review': h.requires_review,
+                    'review_status': h.review_status,
+                    'created_at': h.created_at,
+                    'executed_at': h.executed_at,
+                    'error_message': h.error_message
+                })
+            return result
+        except Exception as e:
+            self.logger.error(f"获取互动历史失败: {str(e)}")
+            return []
         finally:
             session.close()
 

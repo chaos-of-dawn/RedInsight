@@ -102,7 +102,7 @@ def check_and_activate():
 def main():
     """主函数"""
     print("=" * 60)
-    print("🔍 RedInsight - Reddit数据分析工具")
+    print("🔍 RedInsight - Reddit自动化、数据分析工具")
     print("=" * 60)
     print()
     

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RedInsight - Reddit数据分析工具
+RedInsight - Reddit自动化、数据分析工具
 安装脚本
 """
 
@@ -22,7 +22,7 @@ setup(
     version="1.0.0",
     author="RedInsight Team",
     author_email="redinsight@example.com",
-    description="Reddit数据分析工具 - 抓取Reddit数据并使用大模型进行分析",
+    description="Reddit自动化、数据分析工具 - 抓取Reddit数据并使用大模型进行分析",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
     url="https://github.com/chaos-of-dawn/RedInsight",

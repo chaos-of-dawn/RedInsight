@@ -13,7 +13,7 @@ import json
 import time
 import re
 import requests
-from config import Config
+from app_config import Config
 
 class LLMAnalyzer:
     """大模型分析器"""
@@ -622,10 +622,31 @@ class LLMAnalyzer:
                     # 如果找不到闭合的}，尝试修复
                     json_text = response_text[json_start:]
             else:
-                # 没有找到JSON结构，可能是纯文本响应
-                # 尝试将纯文本转换为JSON格式
-                self.logger.warning("响应中没有找到JSON结构，尝试将纯文本转换为JSON")
-                json_text = self._convert_text_to_json(response_text, analysis_type)
+                # 尝试更宽松的检测：查找可能的JSON结构
+                # 检查是否有类似JSON的键值对模式
+                has_json_like_pattern = bool(re.search(r'["\']\w+["\']\s*:\s*["\']', response_text) or 
+                                             re.search(r'["\']\w+["\']\s*:\s*\[', response_text) or
+                                             re.search(r'["\']\w+["\']\s*:\s*\{', response_text))
+                
+                if has_json_like_pattern:
+                    # 可能有JSON结构但格式不标准，尝试提取
+                    self.logger.debug("检测到类似JSON的结构，尝试提取")
+                    # 尝试找到第一个{和最后一个}
+                    json_start = response_text.find("{")
+                    if json_start >= 0:
+                        json_end = response_text.rfind("}")
+                        if json_end > json_start:
+                            json_text = response_text[json_start:json_end+1]
+                        else:
+                            json_text = response_text[json_start:]
+                    else:
+                        # 没有找到JSON结构，可能是纯文本响应
+                        self.logger.info("响应中没有找到标准JSON结构，尝试将纯文本转换为JSON")
+                        json_text = self._convert_text_to_json(response_text, analysis_type)
+                else:
+                    # 没有找到JSON结构，可能是纯文本响应
+                    self.logger.info("响应中没有找到JSON结构，尝试将纯文本转换为JSON")
+                    json_text = self._convert_text_to_json(response_text, analysis_type)
             
             # 清理JSON文本
             json_text = self._clean_json_text(json_text)
@@ -925,13 +946,13 @@ class LLMAnalyzer:
                 # 转义字符串中的特殊字符（如果还没有转义）
                 # 但要注意不要重复转义已经转义的字符
                 fixed_content = ""
-                i = 0
-                while i < len(string_content):
-                    char = string_content[i]
-                    if char == '\\' and i + 1 < len(string_content):
+                idx = 0
+                while idx < len(string_content):
+                    char = string_content[idx]
+                    if char == '\\' and idx + 1 < len(string_content):
                         # 已经是转义字符，保留
-                        fixed_content += char + string_content[i + 1]
-                        i += 2
+                        fixed_content += char + string_content[idx + 1]
+                        idx += 2
                     elif char in ['\n', '\r', '\t', '\x00']:
                         # 未转义的特殊字符，需要转义
                         if char == '\n':
@@ -942,13 +963,184 @@ class LLMAnalyzer:
                             fixed_content += '\\t'
                         elif char == '\x00':
                             fixed_content += '\\u0000'
-                        i += 1
-                else:
+                        idx += 1
+                    else:
                         fixed_content += char
-                        i += 1
+                        idx += 1
                 
                 # 替换字符串内容并添加结束引号
                 json_text = json_text[:last_quote_pos + 1] + fixed_content + '"'
+        
+        # 修复缺少引号的字符串值
+        # 检测 ": " 后面跟着的不是引号、数字、布尔值、null、数组或对象的情况
+        # 这种情况通常出现在AI返回的JSON中，值直接是文本但没有引号
+        i = 0
+        result_chars = []
+        while i < len(json_text):
+            # 检查是否是 ": " 模式（键值分隔符）
+            if i < len(json_text) - 2 and json_text[i:i+2] == '":':
+                result_chars.append('":')
+                i += 2
+                # 跳过空白字符
+                whitespace_start = i
+                while i < len(json_text) and json_text[i] in [' ', '\t']:
+                    result_chars.append(json_text[i])
+                    i += 1
+                
+                if i >= len(json_text):
+                    break
+                
+                # 检查值是否已经有引号、是数字、布尔值、null、数组或对象
+                next_char = json_text[i]
+                if next_char in ['"', '[', '{']:
+                    # 已经有引号、数组或对象，不需要修复
+                    result_chars.append(next_char)
+                    i += 1
+                    continue
+                elif next_char.isdigit() or next_char == '-':
+                    # 是数字，不需要修复
+                    result_chars.append(next_char)
+                    i += 1
+                    continue
+                elif json_text[i:i+4] == 'true' or json_text[i:i+5] == 'false' or json_text[i:i+4] == 'null':
+                    # 是布尔值或null，不需要修复
+                    while i < len(json_text) and json_text[i] not in [',', '}', '\n']:
+                        result_chars.append(json_text[i])
+                        i += 1
+                    continue
+                
+                # 值没有引号，需要添加
+                # 找到值的结束位置（下一个逗号、}，但需要处理嵌套）
+                value_start = i
+                value_end = i
+                brace_count = 0
+                bracket_count = 0
+                
+                while value_end < len(json_text):
+                    c = json_text[value_end]
+                    
+                    # 不在字符串内（因为值本身没有引号）
+                    if c == '{':
+                        brace_count += 1
+                    elif c == '}':
+                        brace_count -= 1
+                        if brace_count < 0:
+                            # 找到了对象的结束
+                            break
+                    elif c == '[':
+                        bracket_count += 1
+                    elif c == ']':
+                        bracket_count -= 1
+                    elif c == ',' and brace_count == 0 and bracket_count == 0:
+                        # 找到了下一个键值对的开始
+                        break
+                    elif c == '\n' and brace_count == 0 and bracket_count == 0:
+                        # 检查下一行是否开始新的键（以"开头）
+                        next_line_start = value_end + 1
+                        while next_line_start < len(json_text) and json_text[next_line_start] in [' ', '\t']:
+                            next_line_start += 1
+                        if next_line_start < len(json_text) and json_text[next_line_start] == '"':
+                            # 下一行开始新的键，当前值结束
+                            break
+                    
+                    value_end += 1
+                
+                # 提取值
+                value = json_text[value_start:value_end].rstrip()
+                # 移除末尾可能的逗号
+                trailing_comma = ''
+                if value.endswith(','):
+                    trailing_comma = ','
+                    value = value[:-1].rstrip()
+                
+                # 如果值到达了文本末尾，说明JSON可能被截断了
+                # 在这种情况下，我们需要确保值被正确闭合
+                if value_end >= len(json_text):
+                    # JSON被截断，值需要被闭合
+                    # 转义值中的特殊字符
+                    escaped_value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                    
+                    # 添加引号
+                    result_chars.append('"')
+                    result_chars.append(escaped_value)
+                    result_chars.append('"')
+                    # 不添加逗号，因为这是最后一个值
+                    
+                    # 更新i到文本末尾
+                    i = len(json_text)
+                else:
+                    # 正常情况，值有明确的结束位置
+                    # 转义值中的特殊字符
+                    escaped_value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                    
+                    # 添加引号
+                    result_chars.append('"')
+                    result_chars.append(escaped_value)
+                    result_chars.append('"')
+                    result_chars.append(trailing_comma)
+                    
+                    i = value_end
+            else:
+                result_chars.append(json_text[i])
+                i += 1
+        
+        json_text = ''.join(result_chars)
+        
+        # 再次检查并修复未闭合的字符串（在修复缺少引号的字符串值之后）
+        # 使用状态机检查是否有未闭合的字符串
+        in_string_check = False
+        escape_next_check = False
+        last_quote_pos = -1
+        
+        for idx, char in enumerate(json_text):
+            if escape_next_check:
+                escape_next_check = False
+                continue
+            elif char == '\\':
+                escape_next_check = True
+            elif char == '"':
+                # 检查是否是转义的引号
+                backslash_count = 0
+                j = idx - 1
+                while j >= 0 and json_text[j] == '\\':
+                    backslash_count += 1
+                    j -= 1
+                if backslash_count % 2 == 0:
+                    in_string_check = not in_string_check
+                    if in_string_check:
+                        # 记录字符串开始位置
+                        last_quote_pos = idx
+        
+        # 如果最后还在字符串内部，说明字符串未闭合（JSON被截断）
+        if in_string_check and last_quote_pos >= 0:
+            # 找到未闭合的字符串，需要修复
+            string_content = json_text[last_quote_pos + 1:]
+            # 转义字符串中的特殊字符
+            fixed_content = ""
+            idx = 0
+            while idx < len(string_content):
+                char = string_content[idx]
+                if char == '\\' and idx + 1 < len(string_content):
+                    # 已经是转义字符，保留
+                    fixed_content += char + string_content[idx + 1]
+                    idx += 2
+                elif char in ['\n', '\r', '\t', '\x00']:
+                    # 未转义的特殊字符，需要转义
+                    if char == '\n':
+                        fixed_content += '\\n'
+                    elif char == '\r':
+                        fixed_content += '\\r'
+                    elif char == '\t':
+                        fixed_content += '\\t'
+                    elif char == '\x00':
+                        fixed_content += '\\u0000'
+                    idx += 1
+                else:
+                    fixed_content += char
+                    idx += 1
+            
+            # 替换字符串内容并添加结束引号
+            json_text = json_text[:last_quote_pos + 1] + fixed_content + '"'
         
         # 修复截断的数组
         open_brackets = json_text.count('[')
@@ -1170,6 +1362,55 @@ class LLMAnalyzer:
         
         # 尝试提取结构化内容
         result_dict = {}
+        
+        # 特殊处理：识别结构化分析报告（如"匹配度评估"、"讨论热度评估"、"推荐建议"、"趋势洞察"等）
+        if analysis_type in ["keyword_match_analysis", "keyword_recommendation"] or \
+           any(keyword in text for keyword in ["匹配度评估", "讨论热度评估", "推荐建议", "趋势洞察", "热度分析", "推荐策略", "注意事项"]):
+            
+            # 提取结构化章节
+            structured_sections = {}
+            
+            # 匹配带编号的章节：1. **匹配度评估**: 内容
+            section_pattern1 = r'(\d+)\.\s*\*\*([^*]+?)\*\*\s*[:：]\s*(.+?)(?=\n\d+\.\s*\*\*|\n\*\*|\n\n|$)'
+            matches1 = re.findall(section_pattern1, text, re.MULTILINE | re.DOTALL)
+            
+            # 匹配带**的章节标题：**匹配度评估** 或 **匹配度评估**:
+            section_pattern2 = r'\*\*([^*]+?)\*\*\s*[:：]?\s*\n(.+?)(?=\n\*\*|\n\d+\.|\n\n|$)'
+            matches2 = re.findall(section_pattern2, text, re.MULTILINE | re.DOTALL)
+            
+            # 匹配不带**的章节标题（如"热度分析"、"推荐策略"、"注意事项"）
+            section_pattern3 = r'(热度分析|推荐策略|注意事项|匹配度评估|讨论热度评估|推荐建议|趋势洞察)[:：]?\s*\n(.+?)(?=\n(?:热度分析|推荐策略|注意事项|匹配度评估|讨论热度评估|推荐建议|趋势洞察)[:：]|\n\n|$)'
+            matches3 = re.findall(section_pattern3, text, re.MULTILINE | re.DOTALL)
+            
+            if matches1:
+                # 格式：1. **标题**: 内容
+                for num, title, content in matches1:
+                    cleaned_title = title.strip()
+                    cleaned_content = content.strip().replace('\n\n', '\n').strip()
+                    structured_sections[cleaned_title] = cleaned_content
+            elif matches2:
+                # 格式：**标题**: 内容
+                for title, content in matches2:
+                    cleaned_title = title.strip()
+                    cleaned_content = content.strip().replace('\n\n', '\n').strip()
+                    structured_sections[cleaned_title] = cleaned_content
+            elif matches3:
+                # 格式：标题: 内容
+                for title, content in matches3:
+                    cleaned_title = title.strip()
+                    cleaned_content = content.strip().replace('\n\n', '\n').strip()
+                    structured_sections[cleaned_title] = cleaned_content
+            
+            if structured_sections:
+                # 构建结构化的JSON
+                result_dict = {
+                    "analysis": structured_sections,
+                    "sections": list(structured_sections.keys()),
+                    "total_sections": len(structured_sections),
+                    "note": "从纯文本响应中提取的结构化分析内容"
+                }
+                # 转换为JSON字符串
+                return json.dumps(result_dict, ensure_ascii=False, indent=2)
         
         # 检测是否是列表格式（如 "1. **项目** - 描述" 或 "**项目** - 描述"）
         # 提取所有列表项

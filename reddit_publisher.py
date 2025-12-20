@@ -43,11 +43,11 @@ class RedditPublisher:
             
             # 检查缺失的数据并添加警告
             if not insights or (not insights.get('dominant_themes') and not insights.get('top_pain_points') and not insights.get('key_opportunities')):
-                warnings.append("⚠️ 深度分析报告数据缺失或为空，将主要基于用户输入生成")
-                logger.warning("深度分析报告数据缺失")
+                warnings.append("⚠️ 洞察数据缺失或为空，将主要基于用户输入生成")
+                logger.warning("洞察数据缺失")
             
             if not user_input:
-                warnings.append("⚠️ 用户需求描述为空，将主要基于深度分析生成")
+                warnings.append("⚠️ 用户需求描述为空，将主要基于可用数据生成")
                 logger.warning("用户需求描述为空")
             
             # 即使有缺失，也继续生成
@@ -212,7 +212,7 @@ class RedditPublisher:
 - 子版块名称: r/{subreddit_name}
 - 规则数量: {len(rules.get('rules', []))}
 
-## 深度分析洞察
+## 业务洞察
 主导主题: {', '.join(insights.get('dominant_themes', [])[:5])}
 主要痛点: {', '.join(insights.get('top_pain_points', [])[:5])}
 关键机会: {', '.join(insights.get('key_opportunities', [])[:5])}
@@ -347,7 +347,7 @@ class RedditPublisher:
     
     def publish_post(self, content: Dict[str, str], subreddit_name: str, flair: str = None) -> Dict[str, Any]:
         """
-        发布帖子（注意：这需要Reddit API的写权限）
+        发布帖子到单个子版块（注意：这需要Reddit API的写权限）
         
         Args:
             content: 帖子内容 {'title': str, 'content': str}
@@ -403,6 +403,43 @@ class RedditPublisher:
             return {
                 'success': False,
                 'error': str(e)
+            }
+    
+    def publish_to_multiple_subreddits(self, content: Dict[str, str], subreddit_names: List[str], 
+                                      flair: str = None) -> Dict[str, Any]:
+        """
+        发布帖子到多个子版块
+        
+        Args:
+            content: 帖子内容 {'title': str, 'content': str}
+            subreddit_names: 子版块名称列表
+            flair: 标签（可选）
+            
+        Returns:
+            发布结果 {'success': bool, 'results': List[Dict], 'total': int, 'succeeded': int, 'failed': int}
+        """
+        results = []
+        succeeded = 0
+        failed = 0
+        
+        for subreddit_name in subreddit_names:
+            result = self.publish_post(content, subreddit_name, flair)
+            results.append({
+                'subreddit': subreddit_name,
+                'result': result
+            })
+            
+            if result.get('success'):
+                succeeded += 1
+            else:
+                failed += 1
+        
+        return {
+            'success': succeeded > 0,
+            'results': results,
+            'total': len(subreddit_names),
+            'succeeded': succeeded,
+            'failed': failed
             }
     
     def save_post_record(self, post_id: str, subreddit_name: str, title: str, published_at: datetime) -> bool:

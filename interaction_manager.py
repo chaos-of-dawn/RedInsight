@@ -672,13 +672,13 @@ class InteractionManager:
                     )
                     session.add(stats)
                 
-                # 更新统计
+                # 更新统计 - 确保字段有默认值
                 if action == 'upvote':
-                    stats.total_upvotes += 1
+                    stats.total_upvotes = (stats.total_upvotes or 0) + 1
                 elif action == 'downvote':
-                    stats.total_downvotes += 1
+                    stats.total_downvotes = (stats.total_downvotes or 0) + 1
                 elif action == 'save':
-                    stats.total_saves += 1
+                    stats.total_saves = (stats.total_saves or 0) + 1
                 
                 # 计算互动评分
                 stats.engagement_score = self._calculate_engagement_score(stats)
@@ -695,21 +695,26 @@ class InteractionManager:
     def _calculate_engagement_score(self, stats) -> float:
         """计算互动评分"""
         try:
+            # 确保所有字段都有默认值（处理 None 情况）
+            total_upvotes = stats.total_upvotes or 0
+            total_downvotes = stats.total_downvotes or 0
+            total_comments = stats.total_comments or 0
+            total_saves = stats.total_saves or 0
+            
             # 简单的评分算法
-            total_interactions = (stats.total_upvotes + stats.total_downvotes + 
-                                stats.total_comments + stats.total_saves)
+            total_interactions = total_upvotes + total_downvotes + total_comments + total_saves
             
             if total_interactions == 0:
                 return 0.0
             
             # 权重：点赞 > 评论 > 保存 > 点踩
-            score = (stats.total_upvotes * 2.0 + 
-                    stats.total_comments * 1.5 + 
-                    stats.total_saves * 1.0 + 
-                    stats.total_downvotes * 0.5)
+            score = (total_upvotes * 2.0 + 
+                    total_comments * 1.5 + 
+                    total_saves * 1.0 + 
+                    total_downvotes * 0.5)
             
             return round(score, 2)
             
         except Exception as e:
-            logger.error(f"计算互动评分失败: {str(e)}")
+            logger.error(f"计算互动评分失败: {str(e)}", exc_info=True)
             return 0.0

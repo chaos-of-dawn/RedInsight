@@ -5,6 +5,7 @@
 import logging
 from typing import Dict, List, Any, Tuple
 import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -120,35 +121,336 @@ class DemandAnalyzer:
     def _parse_analysis_response(self, response: str) -> Dict[str, Any]:
         """解析大模型响应"""
         try:
-            # 尝试提取JSON部分
+            json_str = None
+            
+            # 方法1: 尝试提取代码块中的JSON
             if "```json" in response:
                 json_start = response.find("```json") + 7
                 json_end = response.find("```", json_start)
-                json_str = response[json_start:json_end].strip()
-            elif "{" in response and "}" in response:
+                if json_end == -1:
+                    # 如果没有找到结束标记，尝试找到最后一个}
+                    json_end = response.rfind("}")
+                    if json_end != -1:
+                        json_end += 1
+                if json_end > json_start:
+                    json_str = response[json_start:json_end].strip()
+            
+            # 方法2: 尝试提取普通JSON（没有代码块）
+            if not json_str and "{" in response:
                 json_start = response.find("{")
                 json_end = response.rfind("}") + 1
-                json_str = response[json_start:json_end]
-            else:
-                # 如果没有找到JSON，使用默认结果
+                if json_end > json_start:
+                    json_str = response[json_start:json_end]
+            
+            if not json_str:
+                logger.warning("响应中没有找到JSON结构")
                 return self._get_default_result("")
             
-            result = json.loads(json_str)
+            # 尝试修复常见的JSON错误
+            json_str = self._fix_json_string(json_str)
             
-            # 验证必要字段
-            required_fields = ["translation", "keywords", "suggested_subreddits"]
-            for field in required_fields:
-                if field not in result:
-                    result[field] = self._get_default_field(field)
+            # 尝试解析JSON
+            try:
+                result = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                logger.warning(f"直接解析失败，尝试修复: {str(e)}")
+                # 尝试提取部分可用的JSON
+                result = self._extract_partial_json(json_str)
+                if not result:
+                    logger.error(f"JSON解析失败: {str(e)}")
+                    logger.error(f"错误位置: 行 {e.lineno}, 列 {e.colno}")
+                    logger.error(f"尝试解析的JSON文本（前500字符）: {json_str[:500]}")
+                    logger.error(f"原始响应（前1000字符）: {response[:1000]}")
+                    return self._get_default_result("")
+            
+            # 验证和补充必要字段
+            if not isinstance(result, dict):
+                logger.warning("解析结果不是字典类型")
+                return self._get_default_result("")
+            
+            # 确保有基本字段
+            if "translation" not in result:
+                result["translation"] = "Translation not available"
+            if "keywords" not in result:
+                result["keywords"] = ["general"]
+            if "intent" not in result:
+                result["intent"] = "General request"
+            
+            # 确保funnel_candidates结构完整
+            if "funnel_candidates" not in result:
+                result["funnel_candidates"] = {
+                    "high_match": [],
+                    "medium_match": [],
+                    "low_match": []
+                }
+            else:
+                for match_type in ["high_match", "medium_match", "low_match"]:
+                    if match_type not in result["funnel_candidates"]:
+                        result["funnel_candidates"][match_type] = []
             
             return result
             
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON解析失败: {str(e)}")
-            return self._get_default_result("")
         except Exception as e:
             logger.error(f"响应解析失败: {str(e)}")
             return self._get_default_result("")
+    
+    def _fix_json_string(self, json_str: str) -> str:
+        """尝试修复常见的JSON格式问题"""
+        import re
+        
+        # 移除可能的BOM标记
+        if json_str.startswith('\ufeff'):
+            json_str = json_str[1:]
+        
+        # 修复缺少引号的字符串值（与llm_analyzer.py中的逻辑一致）
+        # 检测 ": " 后面跟着的不是引号、数字、布尔值、null、数组或对象的情况
+        i = 0
+        result_chars = []
+        while i < len(json_str):
+            # 检查是否是 ": " 模式（键值分隔符）
+            if i < len(json_str) - 2 and json_str[i:i+2] == '":':
+                result_chars.append('":')
+                i += 2
+                # 跳过空白字符
+                while i < len(json_str) and json_str[i] in [' ', '\t']:
+                    result_chars.append(json_str[i])
+                    i += 1
+                
+                if i >= len(json_str):
+                    break
+                
+                # 检查值是否已经有引号、是数字、布尔值、null、数组或对象
+                next_char = json_str[i]
+                if next_char in ['"', '[', '{']:
+                    # 已经有引号、数组或对象，不需要修复
+                    result_chars.append(next_char)
+                    i += 1
+                    continue
+                elif next_char.isdigit() or next_char == '-':
+                    # 是数字，不需要修复
+                    result_chars.append(next_char)
+                    i += 1
+                    continue
+                elif json_str[i:i+4] == 'true' or json_str[i:i+5] == 'false' or json_str[i:i+4] == 'null':
+                    # 是布尔值或null，不需要修复
+                    while i < len(json_str) and json_str[i] not in [',', '}', '\n']:
+                        result_chars.append(json_str[i])
+                        i += 1
+                    continue
+                
+                # 值没有引号，需要添加
+                # 找到值的结束位置（下一个逗号、}，但需要处理嵌套）
+                value_start = i
+                value_end = i
+                brace_count = 0
+                bracket_count = 0
+                
+                while value_end < len(json_str):
+                    c = json_str[value_end]
+                    
+                    # 不在字符串内（因为值本身没有引号）
+                    if c == '{':
+                        brace_count += 1
+                    elif c == '}':
+                        brace_count -= 1
+                        if brace_count < 0:
+                            # 找到了对象的结束
+                            break
+                    elif c == '[':
+                        bracket_count += 1
+                    elif c == ']':
+                        bracket_count -= 1
+                    elif c == ',' and brace_count == 0 and bracket_count == 0:
+                        # 找到了下一个键值对的开始
+                        break
+                    elif c == '\n' and brace_count == 0 and bracket_count == 0:
+                        # 检查下一行是否开始新的键（以"开头）
+                        next_line_start = value_end + 1
+                        while next_line_start < len(json_str) and json_str[next_line_start] in [' ', '\t']:
+                            next_line_start += 1
+                        if next_line_start < len(json_str) and json_str[next_line_start] == '"':
+                            # 下一行开始新的键，当前值结束
+                            break
+                    
+                    value_end += 1
+                
+                # 提取值
+                value = json_str[value_start:value_end].rstrip()
+                # 移除末尾可能的逗号
+                trailing_comma = ''
+                if value.endswith(','):
+                    trailing_comma = ','
+                    value = value[:-1].rstrip()
+                
+                # 转义值中的特殊字符
+                escaped_value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                
+                # 添加引号
+                result_chars.append('"')
+                result_chars.append(escaped_value)
+                result_chars.append('"')
+                result_chars.append(trailing_comma)
+                
+                i = value_end
+            else:
+                result_chars.append(json_str[i])
+                i += 1
+        
+        json_str = ''.join(result_chars)
+        
+        # 移除尾部的逗号（在最后一个对象/数组元素后）
+        json_str = json_str.rstrip()
+        while json_str.endswith(',') or json_str.endswith(',}'):
+            json_str = json_str.rstrip(',').rstrip()
+        
+        return json_str
+    
+    def _extract_partial_json(self, json_str: str) -> Dict[str, Any]:
+        """尝试从不完整的JSON中提取可用部分"""
+        result = {}
+        
+        # 方法1: 尝试找到最后一个完整的对象
+        try:
+            bracket_count = 0
+            last_valid_pos = -1
+            in_string = False
+            escape_next = False
+            
+            for i in range(len(json_str) - 1, -1, -1):
+                char = json_str[i]
+                
+                if escape_next:
+                    escape_next = False
+                    continue
+                
+                if char == '\\':
+                    escape_next = True
+                    continue
+                
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                
+                if not in_string:
+                    if char == '}':
+                        bracket_count += 1
+                    elif char == '{':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            last_valid_pos = i
+                            break
+            
+            if last_valid_pos >= 0:
+                # 提取到最后一个完整对象
+                partial_json = json_str[:last_valid_pos + 1]
+                # 尝试修复未闭合的字符串和数组
+                partial_json = self._fix_incomplete_json(partial_json)
+                try:
+                    parsed = json.loads(partial_json)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except:
+                    pass
+        except:
+            pass
+        
+        # 方法2: 使用正则表达式提取基本字段（即使JSON不完整）
+        try:
+            # 提取translation（支持多行和转义字符）
+            translation_pattern = r'"translation"\s*:\s*"((?:[^"\\]|\\.)*)"'
+            match = re.search(translation_pattern, json_str, re.DOTALL)
+            if match:
+                result["translation"] = match.group(1).replace('\\"', '"').replace('\\n', '\n')
+        except:
+            pass
+        
+        try:
+            # 提取keywords（支持不完整的数组）
+            keywords_pattern = r'"keywords"\s*:\s*\[(.*?)\]'
+            match = re.search(keywords_pattern, json_str, re.DOTALL)
+            if match:
+                keywords_str = match.group(1)
+                # 提取所有引号内的内容
+                keyword_matches = re.findall(r'"([^"]*)"', keywords_str)
+                if keyword_matches:
+                    result["keywords"] = keyword_matches
+                else:
+                    # 如果没有找到，尝试简单的分割
+                    keywords = [k.strip('"\' ,') for k in keywords_str.split(',')]
+                    result["keywords"] = [k.strip() for k in keywords if k.strip() and k.strip() != '']
+        except:
+            pass
+        
+        try:
+            # 提取intent（支持多行）
+            intent_pattern = r'"intent"\s*:\s*"((?:[^"\\]|\\.)*)"'
+            match = re.search(intent_pattern, json_str, re.DOTALL)
+            if match:
+                result["intent"] = match.group(1).replace('\\"', '"').replace('\\n', '\n')
+        except:
+            pass
+        
+        # 如果提取到了基本字段，返回结果
+        if result:
+            # 确保有必要的字段
+            if "translation" not in result:
+                result["translation"] = "Translation not available"
+            if "keywords" not in result:
+                result["keywords"] = ["general"]
+            if "intent" not in result:
+                result["intent"] = "General request"
+            
+            # 添加默认的funnel_candidates结构
+            result["funnel_candidates"] = {
+                "high_match": [],
+                "medium_match": [],
+                "low_match": []
+            }
+            
+            return result
+        
+        return None
+    
+    def _fix_incomplete_json(self, json_str: str) -> str:
+        """修复不完整的JSON字符串"""
+        # 移除尾部的逗号
+        json_str = json_str.rstrip()
+        while json_str.endswith(',') or json_str.endswith(',}') or json_str.endswith(',]'):
+            json_str = json_str.rstrip(',').rstrip()
+        
+        # 检查未闭合的字符串
+        in_string = False
+        escape_next = False
+        quote_count = 0
+        
+        for char in json_str:
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\':
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                if not in_string:
+                    quote_count += 1
+        
+        # 如果字符串未闭合，尝试闭合它
+        if in_string:
+            json_str += '"'
+        
+        # 检查未闭合的数组
+        bracket_count = json_str.count('[') - json_str.count(']')
+        if bracket_count > 0:
+            json_str += ']' * bracket_count
+        
+        # 检查未闭合的对象
+        brace_count = json_str.count('{') - json_str.count('}')
+        if brace_count > 0:
+            json_str += '}' * brace_count
+        
+        return json_str
+    
     
     def _get_default_result(self, user_input: str) -> Dict[str, Any]:
         """获取默认结果"""

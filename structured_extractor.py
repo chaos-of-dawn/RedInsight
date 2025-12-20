@@ -335,11 +335,106 @@ class StructuredExtractor:
             json_str = re.sub(r"'([^']*)':", r'"\1":', json_str)
             json_str = re.sub(r":\s*'([^']*)'", r': "\1"', json_str)
             
-            # 2. 修复尾随逗号
+            # 2. 修复缺少引号的字符串值（与llm_analyzer.py中的逻辑一致）
+            i = 0
+            result_chars = []
+            while i < len(json_str):
+                # 检查是否是 ": " 模式（键值分隔符）
+                if i < len(json_str) - 2 and json_str[i:i+2] == '":':
+                    result_chars.append('":')
+                    i += 2
+                    # 跳过空白字符
+                    while i < len(json_str) and json_str[i] in [' ', '\t']:
+                        result_chars.append(json_str[i])
+                        i += 1
+                    
+                    if i >= len(json_str):
+                        break
+                    
+                    # 检查值是否已经有引号、是数字、布尔值、null、数组或对象
+                    next_char = json_str[i]
+                    if next_char in ['"', '[', '{']:
+                        # 已经有引号、数组或对象，不需要修复
+                        result_chars.append(next_char)
+                        i += 1
+                        continue
+                    elif next_char.isdigit() or next_char == '-':
+                        # 是数字，不需要修复
+                        result_chars.append(next_char)
+                        i += 1
+                        continue
+                    elif json_str[i:i+4] == 'true' or json_str[i:i+5] == 'false' or json_str[i:i+4] == 'null':
+                        # 是布尔值或null，不需要修复
+                        while i < len(json_str) and json_str[i] not in [',', '}', '\n']:
+                            result_chars.append(json_str[i])
+                            i += 1
+                        continue
+                    
+                    # 值没有引号，需要添加
+                    # 找到值的结束位置（下一个逗号、}，但需要处理嵌套）
+                    value_start = i
+                    value_end = i
+                    brace_count = 0
+                    bracket_count = 0
+                    
+                    while value_end < len(json_str):
+                        c = json_str[value_end]
+                        
+                        # 不在字符串内（因为值本身没有引号）
+                        if c == '{':
+                            brace_count += 1
+                        elif c == '}':
+                            brace_count -= 1
+                            if brace_count < 0:
+                                # 找到了对象的结束
+                                break
+                        elif c == '[':
+                            bracket_count += 1
+                        elif c == ']':
+                            bracket_count -= 1
+                        elif c == ',' and brace_count == 0 and bracket_count == 0:
+                            # 找到了下一个键值对的开始
+                            break
+                        elif c == '\n' and brace_count == 0 and bracket_count == 0:
+                            # 检查下一行是否开始新的键（以"开头）
+                            next_line_start = value_end + 1
+                            while next_line_start < len(json_str) and json_str[next_line_start] in [' ', '\t']:
+                                next_line_start += 1
+                            if next_line_start < len(json_str) and json_str[next_line_start] == '"':
+                                # 下一行开始新的键，当前值结束
+                                break
+                        
+                        value_end += 1
+                    
+                    # 提取值
+                    value = json_str[value_start:value_end].rstrip()
+                    # 移除末尾可能的逗号
+                    trailing_comma = ''
+                    if value.endswith(','):
+                        trailing_comma = ','
+                        value = value[:-1].rstrip()
+                    
+                    # 转义值中的特殊字符
+                    escaped_value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+                    
+                    # 添加引号
+                    result_chars.append('"')
+                    result_chars.append(escaped_value)
+                    result_chars.append('"')
+                    result_chars.append(trailing_comma)
+                    
+                    i = value_end
+                else:
+                    result_chars.append(json_str[i])
+                    i += 1
+            
+            json_str = ''.join(result_chars)
+            
+            # 3. 修复尾随逗号
             json_str = re.sub(r',\s*}', '}', json_str)
             json_str = re.sub(r',\s*]', ']', json_str)
             
-            # 3. 修复布尔值
+            # 4. 修复布尔值
             json_str = re.sub(r'\bTrue\b', 'true', json_str)
             json_str = re.sub(r'\bFalse\b', 'false', json_str)
             json_str = re.sub(r'\bNone\b', 'null', json_str)

@@ -3,7 +3,7 @@ RedInsight 简化版主程序
 只保留必要的功能，为压缩包做准备
 """
 import logging
-from config import Config
+from app_config import Config
 
 def setup_logging():
     """设置日志系统"""
