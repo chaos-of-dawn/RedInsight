@@ -25,18 +25,24 @@ jobs:
     
     - name: Check Python syntax
       run: |
-        python -m py_compile config.py
+        python -m py_compile app_config.py
         python -m py_compile database.py
         python -m py_compile reddit_scraper.py
         python -m py_compile llm_analyzer.py
+        python -m py_compile demand_analyzer.py
         python -m py_compile data_organizer.py
         python -m py_compile main.py
         python -m py_compile streamlit_app.py
         python -m py_compile merged_analysis_page.py
-        python -m py_compile advanced_analyzer.py
-        python -m py_compile background_analyzer.py
         python -m py_compile clustering.py
         python -m py_compile insights_generator.py
         python -m py_compile structured_extractor.py
         python -m py_compile vectorizer.py
         python -m py_compile run_app.py
+        python -m py_compile tab_smart_filter.py
+        python -m py_compile tab_subreddit_recommendation.py
+        python -m py_compile tab_data_management.py
+        python -m py_compile tab_data_scraping.py
+        python -m py_compile posting_execution_service.py
+        python -m py_compile modules/posting/ai_generator_module.py
+        python -m py_compile modules/posting/smart_posting_tab.py
